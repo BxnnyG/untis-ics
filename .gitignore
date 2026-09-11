@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------
+#  Secrets & echte Konfiguration  -  NIEMALS committen
+# ---------------------------------------------------------------
+# Enthaelt echte Benutzernamen, Schulen und ENV-Verweise.
+# Vorlage liegt als config.example.yaml bei.
+config.yaml
+config*.yaml
+!config.example.yaml
+
+# Secrets. Die echten Werte gehoeren nach /etc/untis-sync.env (root:root, 0600).
+.env
+.env.*
+!.env.example
+
+# Backups der Konfiguration
+*.bak
+*.bak.*
+config.yaml.bak.*
+
+# ---------------------------------------------------------------
+#  Generierte Daten  -  personenbezogen!
+# ---------------------------------------------------------------
+# Fertige Stundenplaene inkl. Lehrer- und Klassennamen.
+out/
+*.ics
+
+# ---------------------------------------------------------------
+#  Python
+# ---------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------
+#  Editor / OS
+# ---------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log

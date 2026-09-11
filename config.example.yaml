@@ -1,0 +1,63 @@
+app:
+  timezone: "Europe/Berlin"
+  window_days_before: 3
+  window_days_after: 28
+  cache_ttl_seconds: 600
+  output_dir: "./out"
+  mode: "server"               # "cli" oder "server"
+  merge_consecutive: true      # Doppelstunden zu EINEM Termin zusammenfassen
+  refresh_interval_minutes: 30 # Hintergrund-Aktualisierung im Server-Modus (0 = aus)
+
+server:
+  etag: true
+  last_modified: true
+
+accounts:
+  - key: "schueler1"           # taucht in der Feed-URL auf: /calendar/schueler1.ics
+    enabled: true
+
+    # WICHTIG: Das ist der WebUntis-"loginName" der Schule, nicht der Klartextname.
+    # Ermitteln mit:  python cli.py check --config config.yaml
+    # oder direkt über die Schulsuche von WebUntis.
+    school: "musterschule"
+
+    # Optional. Leer lassen -> Server wird automatisch ermittelt.
+    # Empfohlen, weil WebUntis Schulen zwischen Servern verschiebt.
+    server: "musterschule.webuntis.com"
+
+    username: "MaxMuster"
+    password: "SuperGeheim1"   # oder: password_env: "UNTIS_PASS_USER1"
+    verify_ssl: true           # nur bei echten Zertifikatsproblemen auf false
+
+    include_cancelled: true    # entfallene Stunden als "❌ Entfällt" mitliefern
+
+    # Optional: nur nötig, wenn NICHT der eingeloggte Benutzer gemeint ist.
+    # Die JSON-RPC-API braucht eine numerische ID, ein Name reicht nicht.
+    # element:
+    #   type: "class"          # student | teacher | class | subject | room
+    #   id: 4720
+
+    filters:
+      include_subjects: []     # leer = alles
+      exclude_subjects: ["ETHIK"]
+
+    color_map:
+      MATHE: "#1f77b4"
+
+    calendar:
+      file_name: "schueler1.ics"
+      display_name: "Stundenplan Max"   # Kalendername in Google/Apple
+      web_feed: true
+      token: "PRO-ACCOUNT-EIGENER-TOKEN"  # oder: token_env: "FEED_TOKEN_USER1"
+
+  - key: "schueler2"
+    enabled: true
+    school: "musterschule"
+    server: "musterschule.webuntis.com"
+    username: "user2"
+    password: "SuperGeheim2"
+    calendar:
+      file_name: "schueler2.ics"
+      display_name: "Stundenplan Lisa"
+      web_feed: true
+      token: "ANDERER-TOKEN-ALS-OBEN"

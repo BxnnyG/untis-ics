@@ -1,0 +1,7 @@
+requests
+icalendar
+pydantic>=2
+PyYAML
+python-dotenv
+fastapi
+uvicorn
