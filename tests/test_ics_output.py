@@ -33,10 +33,11 @@ def test_refresh_interval_is_valid_iso_duration():
 
 
 def test_cancelled_event_marked_and_transparent():
+    """Sichtbar gekennzeichnet und zeitlich nicht blockierend.
+    Zum STATUS siehe test_cancelled_stays_visible_by_default."""
     ics = events_to_ics([ev(status="cancelled")])
     cal = Calendar.from_ical(ics)
     vev = cal.walk("VEVENT")[0]
-    assert str(vev["STATUS"]) == "CANCELLED"
     assert str(vev["TRANSP"]) == "TRANSPARENT"
     assert "Entfällt" in str(vev["SUMMARY"])
 
@@ -75,3 +76,70 @@ def test_location_stays_room_number():
     e = ev(room="R101", room_long="Hauptgebaeude")
     cal = Calendar.from_ical(events_to_ics([e]))
     assert str(cal.walk("VEVENT")[0]["LOCATION"]) == "R101"
+
+
+# --- Entfall -----------------------------------------------------------------
+
+def test_cancelled_stays_visible_by_default():
+    """Google blendet STATUS:CANCELLED aus - der Termin waere dann komplett
+    weg statt sichtbar gekennzeichnet."""
+    cal = Calendar.from_ical(events_to_ics([ev(status="cancelled")]))
+    vev = cal.walk("VEVENT")[0]
+    assert str(vev["STATUS"]) == "CONFIRMED"
+    assert "Entfällt" in str(vev["SUMMARY"])
+
+
+def test_cancelled_never_blocks_time():
+    cal = Calendar.from_ical(events_to_ics([ev(status="cancelled")]))
+    assert str(cal.walk("VEVENT")[0]["TRANSP"]) == "TRANSPARENT"
+
+
+def test_cancelled_style_status_emits_cancelled():
+    cal = Calendar.from_ical(events_to_ics([ev(status="cancelled")],
+                                           cancelled_style="status"))
+    assert str(cal.walk("VEVENT")[0]["STATUS"]) == "CANCELLED"
+
+
+def test_cancelled_style_hide_drops_event():
+    ics = events_to_ics([ev(status="cancelled"), ev(uid="u2")],
+                        cancelled_style="hide")
+    assert len(Calendar.from_ical(ics).walk("VEVENT")) == 1
+
+
+# --- Online-Unterricht -------------------------------------------------------
+
+def test_online_lesson_is_marked():
+    cal = Calendar.from_ical(events_to_ics([ev(online=True)]))
+    assert "💻" in str(cal.walk("VEVENT")[0]["SUMMARY"])
+
+
+def test_meeting_url_lands_in_url_property():
+    link = "https://meet.example.org/abc"
+    cal = Calendar.from_ical(events_to_ics([ev(online=True, meeting_url=link)]))
+    vev = cal.walk("VEVENT")[0]
+    assert str(vev["URL"]) == link
+    assert link in str(vev["DESCRIPTION"])
+
+
+def test_online_without_room_puts_link_in_location():
+    """Ohne Raum ist der Meeting-Link die nuetzlichste Ortsangabe."""
+    link = "https://meet.example.org/abc"
+    cal = Calendar.from_ical(events_to_ics([ev(room=None, online=True, meeting_url=link)]))
+    assert str(cal.walk("VEVENT")[0]["LOCATION"]) == link
+
+
+def test_online_without_link_says_so():
+    cal = Calendar.from_ical(events_to_ics([ev(online=True)]))
+    assert "noch kein Link" in str(cal.walk("VEVENT")[0]["DESCRIPTION"])
+
+
+def test_room_wins_over_online_in_summary():
+    """Hybrid-Stunde: Raumnummer ist nuetzlicher, 💻 kennzeichnet Online."""
+    cal = Calendar.from_ical(events_to_ics([ev(room="R101", online=True)]))
+    su = str(cal.walk("VEVENT")[0]["SUMMARY"])
+    assert su.endswith("R101") and su.startswith("💻")
+
+
+def test_cancelled_beats_online_marker():
+    cal = Calendar.from_ical(events_to_ics([ev(status="cancelled", online=True)]))
+    assert str(cal.walk("VEVENT")[0]["SUMMARY"]).startswith("❌")

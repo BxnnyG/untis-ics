@@ -27,6 +27,10 @@ class LessonEvent:
     teachers_long: List[str] = field(default_factory=list)  # ["Beispiel"]
     room_long: Optional[str] = None       # "TG-PC-RAUM"
 
+    # Online-Unterricht (nur ueber die REST-Ansicht verfuegbar)
+    online: bool = False
+    meeting_url: Optional[str] = None
+
     def subject_display(self, style: str = "long") -> str:
         """Fach fuer die Terminueberschrift."""
         if style == "short" or not self.subject_long:

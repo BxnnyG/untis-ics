@@ -181,3 +181,34 @@ def test_invalid_subject_style_rejected():
     from untis_calendar.config import AppConfig
     with pytest.raises(Exception):
         AppConfig(subject_style="bunt")
+
+
+# --- Online-Unterricht aus der REST-Anreicherung -----------------------------
+
+def test_extras_are_applied(client):
+    from untis_calendar.untis_rest import LessonExtras
+    ex = LessonExtras()
+    ex.online = True
+    ex.meeting_url = "https://meet.example.org/x"
+    ex.texts = ["Bitte Kamera an"]
+
+    ev = client._map_raw_to_event(raw(id=4711), make_account(), {"4711": ex})
+    assert ev.online is True
+    assert ev.meeting_url == "https://meet.example.org/x"
+    assert "Bitte Kamera an" in ev.notes
+
+
+def test_event_without_extras_is_offline(client):
+    ev = client._map_raw_to_event(raw(), make_account(), {})
+    assert ev.online is False and ev.meeting_url is None
+
+
+def test_merge_does_not_mix_online_and_presence(client):
+    from untis_calendar.untis_rest import LessonExtras
+    ex = LessonExtras(); ex.online = True
+    a = make_account()
+    evs = [
+        client._map_raw_to_event(raw(id=1, startTime=730, endTime=815), a, {}),
+        client._map_raw_to_event(raw(id=2, startTime=815, endTime=900), a, {"2": ex}),
+    ]
+    assert len(client._merge_consecutive(evs)) == 2

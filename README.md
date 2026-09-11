@@ -79,6 +79,47 @@ Zu beachten:
 - Ändert sich ein Token, muss das Abo in Google gelöscht und neu angelegt
   werden – eine URL lässt sich dort nicht bearbeiten.
 
+## Entfallene Stunden
+
+Google Calendar **blendet Termine mit `STATUS:CANCELLED` in abonnierten Feeds
+aus**. Wer entfallene Stunden weiterhin sehen will, darf diesen Status also
+nicht setzen. Steuerung über `app.cancelled_style`:
+
+| Wert | Verhalten |
+|------|-----------|
+| `mark` (Standard) | Termin bleibt sichtbar, Titel beginnt mit `❌ Entfällt:`, `TRANSP:TRANSPARENT` – die Zeit gilt nicht mehr als belegt |
+| `status` | Setzt `STATUS:CANCELLED` (RFC-konform, aber in Google meist unsichtbar) |
+| `hide` | Entfallene Stunden kommen gar nicht erst in den Kalender |
+
+Eine echte Durchstreich-Darstellung wie in Teams kennt Google für abonnierte
+Kalender nicht – `mark` kommt dem am nächsten: der Termin steht weiter an
+seinem Platz, ist als Entfall erkennbar und blockiert die Zeit nicht mehr.
+
+Wer entfallene Stunden generell nicht will, kann sie auch pro Account über
+`include_cancelled: false` abschalten.
+
+## Online-Unterricht
+
+Stunden, die in WebUntis als Online-Unterricht markiert sind, bekommen ein
+`💻` im Titel, die Kategorie `Online` und – falls hinterlegt – den
+Meeting-Link:
+
+- in der `URL`-Property des Termins,
+- in der Beschreibung (dort von Google anklickbar),
+- als `LOCATION`, wenn kein Raum vergeben ist.
+
+Diese Information liefert die alte JSON-RPC-Schnittstelle **nicht**. Sie wird
+über die REST-Ansicht nachgeladen (`app.fetch_online_info: true`) und per
+Stunden-ID zugeordnet. Schlägt das fehl, läuft der Sync ohne diese Extras
+weiter – die Stundenplandaten selbst kommen unverändert aus JSON-RPC.
+
+Zwei Einschränkungen aus der Praxis:
+- Viele Schulen setzen zwar das Online-Flag, hinterlegen aber keine URL
+  (WebUntis liefert dann den Platzhalter `"0"`). Der Termin wird dann als
+  Online gekennzeichnet, mit dem Hinweis, dass kein Link hinterlegt ist.
+- Häufiger steht der Link einfach im Stundentext. Der wird ebenfalls
+  durchsucht, und ein gefundener Link zählt als Online-Unterricht.
+
 ## Sicherheit
 
 **In dieses Repository gehören keine Zugangsdaten.** `config.yaml`, `.env` und
@@ -148,6 +189,7 @@ untis_calendar/
   config.py         # YAML + ENV laden, Validierung
   school_lookup.py  # Schulname -> aktueller WebUntis-Server
   untis_direct.py   # JSON-RPC-Client (authenticate, getTimetable)
+  untis_rest.py     # REST-Anreicherung: Online-Unterricht, Stundentexte
   untis_client.py   # Abruf, Mapping, Filter, Doppelstunden-Zusammenfassung
   ics.py            # ICS-Erzeugung
   server.py         # FastAPI-Feeds + Hintergrund-Refresh

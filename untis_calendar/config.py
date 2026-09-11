@@ -77,7 +77,16 @@ class AppConfig(BaseModel):
     mode: str = "cli"
     merge_consecutive: bool = True  # Doppelstunden zu einem Termin zusammenfassen
     subject_style: str = "long"     # long | short | both - Fach in der Terminueberschrift
+    fetch_online_info: bool = True  # Online-Unterricht/Meeting-Links per REST nachladen
+    cancelled_style: str = "mark"   # mark | status | hide - siehe README
     refresh_interval_minutes: int = 30  # Hintergrund-Aktualisierung im Server-Modus (0 = aus)
+
+    @field_validator("cancelled_style")
+    @classmethod
+    def valid_cancelled_style(cls, v: str) -> str:
+        if v not in ("mark", "status", "hide"):
+            raise ValueError("cancelled_style muss 'mark', 'status' oder 'hide' sein")
+        return v
 
     @field_validator("subject_style")
     @classmethod

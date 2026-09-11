@@ -59,6 +59,7 @@ def cmd_generate(args) -> int:
             calendar_name=acc.calendar.display_name or f"Stundenplan {acc.key}",
             refresh_minutes=cfg.app.refresh_interval_minutes or 60,
             subject_style=cfg.app.subject_style,
+            cancelled_style=cfg.app.cancelled_style,
         )
         out_file.write_bytes(ics_bytes)
         logger.info("geschrieben: %s (%d Termine, %d bytes)",

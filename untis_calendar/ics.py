@@ -10,7 +10,8 @@ from .models import LessonEvent
 
 
 def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = None,
-                  refresh_minutes: int = 60, subject_style: str = "long") -> bytes:
+                  refresh_minutes: int = 60, subject_style: str = "long",
+                  cancelled_style: str = "mark") -> bytes:
     cal = Calendar()
     cal.add("prodid", "-//untis-calendar//v1//DE")
     cal.add("version", "2.0")
@@ -31,6 +32,9 @@ def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = 
     now_utc = datetime.now(timezone.utc)
 
     for e in events:
+        if e.status == "cancelled" and cancelled_style == "hide":
+            continue
+
         ve = Event()
         ve.add("uid", e.uid)
         ve.add("dtstamp", now_utc)
@@ -40,17 +44,32 @@ def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = 
         ve.add("dtend", e.end.astimezone(timezone.utc))
 
         summary = e.subject_display(subject_style)
+        # Raum schlaegt "Online": bei Hybrid-Stunden will man die Raumnummer
+        # sehen, das 💻 im Titel kennzeichnet den Online-Anteil ohnehin.
         if e.room:
             summary = f"{summary} · {e.room}"
+        elif e.online:
+            summary = f"{summary} · Online"
+
         if e.status == "cancelled":
             summary = f"❌ Entfällt: {summary}"
         elif e.status == "substitution":
             summary = f"⚠️ {summary}"
+        elif e.online:
+            summary = f"💻 {summary}"
         ve.add("summary", vText(summary))
 
         # LOCATION bleibt die Raumnummer - danach sucht man im Gebäude.
+        # Bei Online-Unterricht ohne Raum kommt der Meeting-Link dorthin,
+        # den machen Google und Apple in der Terminansicht anklickbar.
         if e.room:
             ve.add("location", vText(e.room))
+        elif e.online:
+            ve.add("location", vText(e.meeting_url or "Online"))
+
+        # URL-Property: eigenes Feld fuer den Meeting-Link
+        if e.meeting_url:
+            ve.add("url", e.meeting_url)
 
         desc_parts = []
         teachers = e.teacher_display()
@@ -79,6 +98,12 @@ def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = 
         if e.groups:
             desc_parts.append(f"Klasse: {', '.join(e.groups)}")
 
+        if e.online:
+            if e.meeting_url:
+                desc_parts.insert(0, f"Online-Unterricht: {e.meeting_url}")
+            else:
+                desc_parts.insert(0, "Online-Unterricht (noch kein Link hinterlegt)")
+
         if e.status == "cancelled":
             desc_parts.append("Diese Stunde entfällt.")
         elif e.status == "substitution":
@@ -89,13 +114,24 @@ def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = 
         ve.add("description", vText("\n".join(desc_parts)))
 
         if e.status == "cancelled":
-            ve.add("status", "CANCELLED")
-            ve.add("transp", "TRANSPARENT")  # blockiert die Zeit nicht
+            # Google blendet STATUS:CANCELLED in abonnierten Feeds aus - der
+            # Termin waere dann komplett weg statt sichtbar durchgestrichen.
+            # Default "mark": sichtbar lassen, im Titel kennzeichnen und die
+            # Zeit nicht mehr als belegt melden.
+            if cancelled_style == "status":
+                ve.add("status", "CANCELLED")
+            else:
+                ve.add("status", "CONFIRMED")
+            ve.add("transp", "TRANSPARENT")
         else:
             ve.add("status", "CONFIRMED")
             ve.add("transp", "OPAQUE")
 
         cats = [e.subject]
+        if e.online:
+            cats.append("Online")
+        if e.status == "cancelled":
+            cats.append("Entfall")
         if e.color_key:
             cats.append(e.color_key)
         ve.add("categories", cats)

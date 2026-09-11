@@ -9,6 +9,7 @@ from .models import LessonEvent
 from .utils import stable_uid, tz_aware
 from .untis_direct import direct_untis_login, UntisError
 from .school_lookup import resolve_server
+from .untis_rest import fetch_lesson_extras
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,28 @@ class UntisClient:
             logger.info("Abrufe Stundenplan für %s von %s bis %s", account.key, start, end)
             raw_list = sess.timetable(start=start, end=end, element=self._element_kwargs(account))
             logger.info("Empfangen: %d Roheinträge für %s", len(raw_list), account.key)
+            person_id, person_type = sess.person_id, sess.person_type
 
-        events = [self._map_raw_to_event(r, account) for r in raw_list]
+        # Online-Unterricht und Stundentexte kennt nur die REST-Ansicht.
+        # Schlaegt das fehl, laeuft der Sync ohne diese Extras weiter.
+        extras = {}
+        if self.app.fetch_online_info and person_id and person_type:
+            extras = fetch_lesson_extras(
+                server=server,
+                school=account.school,
+                username=account.username,
+                password=account.get_password(),
+                element_id=person_id,
+                element_type=person_type,
+                start=start,
+                end=end,
+                verify_ssl=account.verify_ssl,
+            )
+            online_count = sum(1 for e in extras.values() if e.online)
+            if online_count:
+                logger.info("REST: %d Stunde(n) als Online-Unterricht markiert", online_count)
+
+        events = [self._map_raw_to_event(r, account, extras) for r in raw_list]
         events = [e for e in events if self._filter_event(e, account)]
         if not account.include_cancelled:
             events = [e for e in events if e.status != "cancelled"]
@@ -76,7 +97,8 @@ class UntisClient:
             return None
         return {"id": el.id, "type": type_id}
 
-    def _map_raw_to_event(self, r: Dict[str, Any], account: AccountConfig) -> LessonEvent:
+    def _map_raw_to_event(self, r: Dict[str, Any], account: AccountConfig,
+                          extras: Optional[Dict[str, Any]] = None) -> LessonEvent:
         tz = self.app.timezone
         school = account.school
         acct = account.key
@@ -109,9 +131,18 @@ class UntisClient:
             for k in ("substText", "lstext", "info", "activityType")
             if r.get(k) and str(r.get(k)).strip() and str(r.get(k)).strip() != "Unterricht"
         ]
-        notes = " | ".join(dict.fromkeys(note_parts)) or None
 
         source_id = str(r.get("id") or r.get("lstid") or "")
+
+        online = False
+        meeting_url = None
+        extra = (extras or {}).get(source_id)
+        if extra is not None:
+            online = extra.online
+            meeting_url = extra.meeting_url
+            note_parts.extend(extra.texts)
+
+        notes = " | ".join(dict.fromkeys(note_parts)) or None
 
         # UID stabil an der Untis-Perioden-ID festmachen: verschiebt sich eine
         # Stunde (Raum/Zeit/Vertretung), bleibt es derselbe Kalendereintrag und
@@ -138,6 +169,8 @@ class UntisClient:
             subject_long=subject_long,
             teachers_long=teachers_long,
             room_long=room_long,
+            online=online,
+            meeting_url=meeting_url,
         )
 
     def _parse_times(self, d: Dict[str, Any], tz: str) -> tuple[datetime, datetime]:
@@ -210,6 +243,8 @@ class UntisClient:
                 and prev.room == ev.room
                 and prev.teachers == ev.teachers
                 and prev.subject_long == ev.subject_long
+                and prev.online == ev.online
+                and prev.meeting_url == ev.meeting_url
                 and prev.groups == ev.groups
                 and prev.status == ev.status
                 and prev.notes == ev.notes

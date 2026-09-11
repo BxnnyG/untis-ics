@@ -6,6 +6,9 @@ app:
   output_dir: "./out"
   mode: "server"               # "cli" oder "server"
   merge_consecutive: true      # Doppelstunden zu EINEM Termin zusammenfassen
+  subject_style: "long"        # long | short | both - Fach in der Terminueberschrift
+  cancelled_style: "mark"      # mark | status | hide - siehe README
+  fetch_online_info: true      # Online-Unterricht + Meeting-Links per REST nachladen
   refresh_interval_minutes: 30 # Hintergrund-Aktualisierung im Server-Modus (0 = aus)
 
 server:

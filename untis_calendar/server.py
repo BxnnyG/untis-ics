@@ -65,6 +65,7 @@ def create_app(config_path: str) -> FastAPI:
             calendar_name=account.calendar.display_name or f"Stundenplan {account.key}",
             refresh_minutes=cfg.app.refresh_interval_minutes or 60,
             subject_style=cfg.app.subject_style,
+            cancelled_style=cfg.app.cancelled_style,
         )
         out_file.write_bytes(ics_bytes)
         state.last_success = datetime.now(timezone.utc)
