@@ -69,19 +69,46 @@ Wichtige Einstellungen in `config.yaml`:
 ```yaml
 app:
   output_dir: "/var/www/untis-calendar"  # Webserver-Root
-  
+
 accounts:
   - key: "account1"
-    school: "schulname"  # Exakt aus WebUntis-URL!
-    server: "alt-server.webuntis.com"  # Dein WebUntis-Server
+    school: "schulname"        # WebUntis-loginName, nicht der Klartextname
+                               # ermitteln: python find_schools.py "Schule"
+    server: "schule.webuntis.com"  # optional, sonst automatisch ermittelt
     username: "user"
-    password: "pass"  # Oder password_env: "ENV_VAR"
-    verify_ssl: false  # Nur bei selbst-signierten Zertifikaten
+    password_env: "UNTIS_PASS_ACCOUNT1"   # Wert in /etc/untis-sync.env
+    verify_ssl: true           # nur bei echten Zertifikatsproblemen auf false
     calendar:
       file_name: "kalender1.ics"
+      display_name: "Stundenplan Account 1"
       web_feed: true
-      token: "geheimer-token-hier"  # Für URL-Absicherung
+      token_env: "FEED_TOKEN_ACCOUNT1"    # Wert in /etc/untis-sync.env
 ```
+
+**Keine Passwörter oder Tokens in die `config.yaml`.** Die gehören in eine
+root-only Datei, die systemd einliest:
+
+```bash
+sudo install -m 600 -o root -g root /dev/null /etc/untis-sync.env
+sudo nano /etc/untis-sync.env
+```
+
+```ini
+UNTIS_PASS_ACCOUNT1=geheim
+FEED_TOKEN_ACCOUNT1=zufallstoken
+```
+
+In der systemd-Unit:
+
+```ini
+[Service]
+User=www-data
+EnvironmentFile=/etc/untis-sync.env
+```
+
+systemd liest die Datei als root und reicht die Werte an den
+unprivilegierten Dienst weiter – der Dienstbenutzer kann sie nicht von der
+Platte lesen. Siehe Abschnitt "Sicherheit" in der README.
 
 ### 4. Ersten Test durchführen
 
