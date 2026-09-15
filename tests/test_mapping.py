@@ -212,3 +212,60 @@ def test_merge_does_not_mix_online_and_presence(client):
         client._map_raw_to_event(raw(id=2, startTime=815, endTime=900), a, {"2": ex}),
     ]
     assert len(client._merge_consecutive(evs)) == 2
+
+
+# --- Verlegte Stunden --------------------------------------------------------
+
+def _extras_moved_from(slot):
+    from untis_calendar.untis_rest import LessonExtras
+    ex = LessonExtras()
+    ex.cell_state = "SHIFT"
+    ex.moved_from = slot
+    return ex
+
+
+def test_shift_sets_status_moved(client):
+    ev = client._map_raw_to_event(raw(id=7), make_account(),
+                                  {"7": _extras_moved_from((20260922, 1700))})
+    assert ev.status == "moved"
+    assert ev.moved_from.hour == 17 and ev.moved_from.day == 22
+
+
+def test_cancelled_source_gets_linked_to_new_slot(client):
+    """Die REST-Ansicht liefert entfallene Stunden nicht mit; die Gegen-
+    richtung muss aus der verlegten Stunde ergaenzt werden."""
+    a = make_account()
+    cancelled = client._map_raw_to_event(
+        raw(id=1, date=20260922, startTime=1700, endTime=1745, code="cancelled"), a)
+    moved = client._map_raw_to_event(
+        raw(id=2, date=20260915, startTime=1840, endTime=1925), a,
+        {"2": _extras_moved_from((20260922, 1700))})
+
+    client._link_moved_lessons([cancelled, moved])
+    assert cancelled.moved_to is not None
+    assert (cancelled.moved_to.day, cancelled.moved_to.hour) == (15, 18)
+
+
+def test_linking_ignores_unrelated_cancellations(client):
+    a = make_account()
+    cancelled = client._map_raw_to_event(
+        raw(id=1, date=20260923, startTime=900, endTime=945, code="cancelled"), a)
+    moved = client._map_raw_to_event(
+        raw(id=2, date=20260915, startTime=1840, endTime=1925), a,
+        {"2": _extras_moved_from((20260922, 1700))})
+    client._link_moved_lessons([cancelled, moved])
+    assert cancelled.moved_to is None
+
+
+def test_substitution_details_are_kept(client):
+    from untis_calendar.untis_rest import LessonExtras
+    ex = LessonExtras()
+    ex.substitutions = [("Lehrer", "VS", "MY"), ("Raum", "R101", "R204")]
+    ev = client._map_raw_to_event(raw(id=3), make_account(), {"3": ex})
+    assert ev.status == "substitution"
+    assert ("Raum", "R101", "R204") in ev.substitutions
+
+
+def test_slot_to_dt_rejects_garbage(client):
+    assert client._slot_to_dt(None, "Europe/Berlin") is None
+    assert client._slot_to_dt(("kaputt", 800), "Europe/Berlin") is None

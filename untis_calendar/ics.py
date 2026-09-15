@@ -1,12 +1,124 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 from icalendar import Calendar, Event, vText
 from icalendar.prop import vDuration
 
 from .models import LessonEvent
+
+WEEKDAYS = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
+
+
+def _when(dt: datetime) -> str:
+    """'Di 22.09. 17:00' - kurz genug fuer den Terminkopf."""
+    return f"{WEEKDAYS[dt.weekday()]} {dt:%d.%m.} {dt:%H:%M}"
+
+
+def _build_summary(e: LessonEvent, subject_style: str) -> str:
+    """Terminueberschrift.
+
+    Google kuerzt den Titel in der Monats-/Wochenansicht stark ab, deshalb
+    steht der Zustand vorne: das Symbol und ein kurzes Wort sind auch dann
+    noch sichtbar, wenn der Fachname abgeschnitten wird.
+    """
+    fach = e.subject_display(subject_style)
+
+    if e.status == "cancelled":
+        # Bei einer entfallenen Stunde ist der Raum belanglos - dafuer
+        # interessiert, ob und wohin sie verlegt wurde.
+        if e.moved_to:
+            return f"❌ Verlegt · {fach} → {_when(e.moved_to)}"
+        return f"❌ Entfällt · {fach}"
+
+    ort = e.room or ("Online" if e.online else None)
+    rest = f"{fach} · {ort}" if ort else fach
+
+    if e.status == "moved":
+        return f"➡️ {rest}"
+    if e.status == "substitution":
+        return f"⚠️ {rest}"
+    if e.online:
+        return f"💻 {rest}"
+    return rest
+
+
+def _build_description(e: LessonEvent) -> str:
+    """Details. Das Wichtigste zuerst - Google zeigt die erste Zeile
+    in der Terminvorschau."""
+    head: List[str] = []
+
+    if e.status == "cancelled":
+        if e.moved_to:
+            head.append(f"Entfällt hier – verlegt auf {_when(e.moved_to)}.")
+        else:
+            head.append("Diese Stunde entfällt.")
+    elif e.status == "moved":
+        if e.moved_from:
+            head.append(f"Verlegt – ursprünglich {_when(e.moved_from)}.")
+        else:
+            head.append("Verlegte Stunde.")
+    elif e.status == "substitution":
+        head.append("Vertretung / Änderung.")
+
+    for art, vorher, nachher in e.substitutions:
+        head.append(f"{art}: {nachher} statt {vorher}")
+
+    if e.online:
+        if e.meeting_url:
+            head.append(f"Online-Unterricht: {e.meeting_url}")
+        else:
+            head.append("Online-Unterricht (noch kein Link hinterlegt)")
+
+    body: List[str] = []
+    teachers = e.teacher_display()
+    if teachers:
+        # Kuerzel in Klammern, falls es sich vom Klarnamen unterscheidet
+        if e.teachers_long and e.teachers and e.teachers_long != e.teachers:
+            paired = ", ".join(
+                f"{lang} ({kurz})"
+                for lang, kurz in zip(e.teachers_long, e.teachers)
+            )
+            body.append(f"Lehrer: {paired}")
+        else:
+            body.append(f"Lehrer: {', '.join(teachers)}")
+
+    if e.subject_long and e.subject_long != e.subject:
+        body.append(f"Fach: {e.subject} – {e.subject_long}")
+    else:
+        body.append(f"Fach: {e.subject}")
+
+    if e.room:
+        room_txt = e.room
+        if e.room_long and e.room_long != e.room:
+            room_txt = f"{e.room} – {e.room_long}"
+        body.append(f"Raum: {room_txt}")
+
+    if e.groups:
+        body.append(f"Klasse: {', '.join(e.groups)}")
+
+    if e.notes:
+        body.append(e.notes)
+    body.append(f"Quelle: {e.source_school}/{e.account_key}")
+
+    parts = head + ([""] if head else []) + body
+    return "\n".join(parts)
+
+
+def _categories(e: LessonEvent) -> List[str]:
+    cats = [e.subject]
+    if e.online:
+        cats.append("Online")
+    if e.status == "cancelled":
+        cats.append("Entfall")
+    elif e.status == "moved":
+        cats.append("Verlegt")
+    elif e.status == "substitution":
+        cats.append("Vertretung")
+    if e.color_key:
+        cats.append(e.color_key)
+    return cats
 
 
 def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = None,
@@ -43,98 +155,34 @@ def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = 
         ve.add("dtstart", e.start.astimezone(timezone.utc))
         ve.add("dtend", e.end.astimezone(timezone.utc))
 
-        summary = e.subject_display(subject_style)
-        # Raum schlaegt "Online": bei Hybrid-Stunden will man die Raumnummer
-        # sehen, das 💻 im Titel kennzeichnet den Online-Anteil ohnehin.
-        if e.room:
-            summary = f"{summary} · {e.room}"
-        elif e.online:
-            summary = f"{summary} · Online"
-
-        if e.status == "cancelled":
-            summary = f"❌ Entfällt: {summary}"
-        elif e.status == "substitution":
-            summary = f"⚠️ {summary}"
-        elif e.online:
-            summary = f"💻 {summary}"
-        ve.add("summary", vText(summary))
+        ve.add("summary", vText(_build_summary(e, subject_style)))
+        ve.add("description", vText(_build_description(e)))
 
         # LOCATION bleibt die Raumnummer - danach sucht man im Gebäude.
         # Bei Online-Unterricht ohne Raum kommt der Meeting-Link dorthin,
         # den machen Google und Apple in der Terminansicht anklickbar.
-        if e.room:
-            ve.add("location", vText(e.room))
-        elif e.online:
-            ve.add("location", vText(e.meeting_url or "Online"))
+        # Entfallene Stunden brauchen keinen Ort.
+        if e.status != "cancelled":
+            if e.room:
+                ve.add("location", vText(e.room))
+            elif e.online:
+                ve.add("location", vText(e.meeting_url or "Online"))
 
-        # URL-Property: eigenes Feld fuer den Meeting-Link
-        if e.meeting_url:
+        if e.meeting_url and e.status != "cancelled":
             ve.add("url", e.meeting_url)
-
-        desc_parts = []
-        teachers = e.teacher_display()
-        if teachers:
-            # Kuerzel in Klammern, falls es sich vom Klarnamen unterscheidet
-            if e.teachers_long and e.teachers and e.teachers_long != e.teachers:
-                paired = ", ".join(
-                    f"{lang} ({kurz})"
-                    for lang, kurz in zip(e.teachers_long, e.teachers)
-                )
-                desc_parts.append(f"Lehrer: {paired}")
-            else:
-                desc_parts.append(f"Lehrer: {', '.join(teachers)}")
-
-        if e.subject_long and e.subject_long != e.subject:
-            desc_parts.append(f"Fach: {e.subject} – {e.subject_long}")
-        else:
-            desc_parts.append(f"Fach: {e.subject}")
-
-        if e.room:
-            room_txt = e.room
-            if e.room_long and e.room_long != e.room:
-                room_txt = f"{e.room} – {e.room_long}"
-            desc_parts.append(f"Raum: {room_txt}")
-
-        if e.groups:
-            desc_parts.append(f"Klasse: {', '.join(e.groups)}")
-
-        if e.online:
-            if e.meeting_url:
-                desc_parts.insert(0, f"Online-Unterricht: {e.meeting_url}")
-            else:
-                desc_parts.insert(0, "Online-Unterricht (noch kein Link hinterlegt)")
-
-        if e.status == "cancelled":
-            desc_parts.append("Diese Stunde entfällt.")
-        elif e.status == "substitution":
-            desc_parts.append("Vertretung / Änderung.")
-        if e.notes:
-            desc_parts.append(e.notes)
-        desc_parts.append(f"Quelle: {e.source_school}/{e.account_key}")
-        ve.add("description", vText("\n".join(desc_parts)))
 
         if e.status == "cancelled":
             # Google blendet STATUS:CANCELLED in abonnierten Feeds aus - der
-            # Termin waere dann komplett weg statt sichtbar durchgestrichen.
+            # Termin waere dann komplett weg statt sichtbar gekennzeichnet.
             # Default "mark": sichtbar lassen, im Titel kennzeichnen und die
             # Zeit nicht mehr als belegt melden.
-            if cancelled_style == "status":
-                ve.add("status", "CANCELLED")
-            else:
-                ve.add("status", "CONFIRMED")
+            ve.add("status", "CANCELLED" if cancelled_style == "status" else "CONFIRMED")
             ve.add("transp", "TRANSPARENT")
         else:
             ve.add("status", "CONFIRMED")
             ve.add("transp", "OPAQUE")
 
-        cats = [e.subject]
-        if e.online:
-            cats.append("Online")
-        if e.status == "cancelled":
-            cats.append("Entfall")
-        if e.color_key:
-            cats.append(e.color_key)
-        ve.add("categories", cats)
+        ve.add("categories", _categories(e))
         cal.add_component(ve)
 
     return cal.to_ical()

@@ -79,7 +79,20 @@ class AppConfig(BaseModel):
     subject_style: str = "long"     # long | short | both - Fach in der Terminueberschrift
     fetch_online_info: bool = True  # Online-Unterricht/Meeting-Links per REST nachladen
     cancelled_style: str = "mark"   # mark | status | hide - siehe README
-    refresh_interval_minutes: int = 30  # Hintergrund-Aktualisierung im Server-Modus (0 = aus)
+    # Hintergrund-Aktualisierung im Server-Modus (0 = aus).
+    # Waehrend der aktiven Stunden wird haeufig, sonst selten abgerufen -
+    # ein Stundenplan aendert sich nachts nicht.
+    refresh_interval_minutes: int = 15
+    refresh_idle_minutes: int = 120
+    active_hours_start: int = 6   # lokale Stunde, ab der haeufig geprueft wird
+    active_hours_end: int = 22    # lokale Stunde, ab der wieder selten geprueft wird
+
+    @field_validator("active_hours_start", "active_hours_end")
+    @classmethod
+    def valid_hour(cls, v: int) -> int:
+        if not 0 <= v <= 23:
+            raise ValueError("Stunde muss zwischen 0 und 23 liegen")
+        return v
 
     @field_validator("cancelled_style")
     @classmethod

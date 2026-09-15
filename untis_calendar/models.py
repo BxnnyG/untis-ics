@@ -31,6 +31,11 @@ class LessonEvent:
     online: bool = False
     meeting_url: Optional[str] = None
 
+    # Verlegung und Vertretung (ebenfalls nur ueber die REST-Ansicht)
+    moved_from: Optional[datetime] = None   # diese Stunde kommt von dort
+    moved_to: Optional[datetime] = None     # diese Stunde findet dort statt
+    substitutions: List[tuple] = field(default_factory=list)
+
     def subject_display(self, style: str = "long") -> str:
         """Fach fuer die Terminueberschrift."""
         if style == "short" or not self.subject_long:

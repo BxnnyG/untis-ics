@@ -98,6 +98,28 @@ seinem Platz, ist als Entfall erkennbar und blockiert die Zeit nicht mehr.
 Wer entfallene Stunden generell nicht will, kann sie auch pro Account über
 `include_cancelled: false` abschalten.
 
+### Verlegungen und Vertretungen
+
+Verschiebt die Schule eine Stunde, entstehen in WebUntis **zwei** Einträge:
+der alte Termin gilt als entfallen, am neuen steht die Stunde. Beide werden
+gegenseitig verlinkt, sodass an jedem Termin steht, wohin er zeigt:
+
+```
+Di 22.09. 17:00   ❌ Verlegt · Anwendungsentwicklung … → Di 15.09. 18:40
+Di 15.09. 18:40   ➡️ Anwendungsentwicklung … · K004
+                     Verlegt – ursprünglich Di 22.09. 17:00.
+```
+
+Der Zustand steht bewusst **am Anfang** des Titels: Google kürzt Titel in der
+Monats- und Wochenansicht, und so bleibt `❌ Verlegt …` auch dann lesbar.
+Bei entfallenen Stunden wird der Raum weggelassen – er ist dann belanglos.
+
+Ändert sich nur Lehrkraft oder Raum, steht das als `⚠️` im Titel und im
+Detail, was getauscht wurde (`Lehrer: MY statt VS`).
+
+Die Zuordnung braucht die REST-Ansicht (`fetch_online_info`). Die alte
+JSON-RPC-Schnittstelle meldet nur „irgendetwas weicht ab", ohne zu sagen was.
+
 ## Online-Unterricht
 
 Stunden, die in WebUntis als Online-Unterricht markiert sind, bekommen ein
@@ -119,6 +141,32 @@ Zwei Einschränkungen aus der Praxis:
   Online gekennzeichnet, mit dem Hinweis, dass kein Link hinterlegt ist.
 - Häufiger steht der Link einfach im Stundentext. Der wird ebenfalls
   durchsucht, und ein gefundener Link zählt als Online-Unterricht.
+
+## Aktualisierung
+
+Im Serverbetrieb aktualisiert ein Hintergrund-Task die Feeds selbst. Das
+Intervall richtet sich nach der Tageszeit – ein Stundenplan ändert sich
+nachts nicht:
+
+```yaml
+refresh_interval_minutes: 15   # innerhalb der aktiven Stunden
+refresh_idle_minutes: 120      # ausserhalb (0 = immer gleiches Intervall)
+active_hours_start: 6
+active_hours_end: 22
+```
+
+Anfragen an den Feed werden dabei **immer aus der Datei** beantwortet und
+lösen keinen WebUntis-Abruf aus. Das hält die Antwortzeiten kurz und
+verhindert, dass jeder Client-Abruf Last erzeugt. Live geholt wird nur, wenn
+noch keine Datei existiert oder der Hintergrund-Task offensichtlich hängt
+(Datei älter als das Dreifache des Intervalls). Parallele Anfragen auf
+denselben Account werden über ein Lock zusammengefasst.
+
+Wichtig zur Erwartung: **wie oft Google den Feed abholt, bestimmt Google.**
+Typisch sind einige Stunden, und `REFRESH-INTERVAL` im Feed wird ignoriert.
+Ein kürzeres Intervall hier macht den Feed frischer, beschleunigt aber nicht
+Googles Abruf. Wer eine Änderung sofort sehen will, ruft die Feed-URL direkt
+auf oder abonniert sie in einem Client, der selbst häufiger pollt.
 
 ## Sicherheit
 

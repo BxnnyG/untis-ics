@@ -27,17 +27,30 @@ URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 # Platzhalter, die WebUntis statt einer echten URL liefert
 PLACEHOLDER_URLS = {"", "0", "-", "null", "none"}
 
+# WebUntis-Elementtypen in der REST-Ansicht
+ELEMENT_LABELS = {1: "Klasse", 2: "Lehrer", 3: "Fach", 4: "Raum"}
+
 
 class LessonExtras:
-    __slots__ = ("online", "meeting_url", "texts")
+    __slots__ = ("online", "meeting_url", "texts", "cell_state",
+                 "moved_from", "moved_to", "substitutions")
 
     def __init__(self) -> None:
         self.online: bool = False
         self.meeting_url: Optional[str] = None
         self.texts: List[str] = []
+        # Zustand der Stunde laut REST-Ansicht: STANDARD, SHIFT, CANCEL, ...
+        self.cell_state: Optional[str] = None
+        # Verlegung: (datum, HHMM) - woher die Stunde kommt bzw. wohin sie geht
+        self.moved_from: Optional[tuple] = None
+        self.moved_to: Optional[tuple] = None
+        # Vertretungen als (Art, vorher, nachher), z. B. ("Lehrer", "VS", "MY")
+        self.substitutions: List[tuple] = []
 
     def __repr__(self) -> str:  # pragma: no cover - nur Debug
-        return f"LessonExtras(online={self.online}, url={self.meeting_url!r}, texts={self.texts!r})"
+        return (f"LessonExtras(online={self.online}, url={self.meeting_url!r}, "
+                f"state={self.cell_state}, from={self.moved_from}, to={self.moved_to}, "
+                f"subst={self.substitutions})")
 
 
 def _clean_url(raw: Any) -> Optional[str]:
@@ -99,7 +112,8 @@ class UntisRestSession:
         except Exception as e:
             logger.debug("REST-Logout ignoriert: %s", e)
 
-    def _week_data(self, element_id: int, element_type: int, day: date) -> List[Dict[str, Any]]:
+    def _week_data(self, element_id: int, element_type: int,
+                   day: date) -> tuple[List[Dict[str, Any]], Dict[tuple, str]]:
         resp = self.session.get(
             f"{self.server}/WebUntis/api/public/timetable/weekly/data",
             params={
@@ -114,10 +128,20 @@ class UntisRestSession:
         resp.raise_for_status()
         data = resp.json()
         try:
-            periods = data["data"]["result"]["data"]["elementPeriods"][str(element_id)]
+            res = data["data"]["result"]["data"]
         except (KeyError, TypeError):
-            return []
-        return periods if isinstance(periods, list) else []
+            return [], {}
+
+        periods = res.get("elementPeriods", {}).get(str(element_id)) or []
+        if not isinstance(periods, list):
+            periods = []
+
+        # Register (typ, id) -> Name, um orgId aufloesen zu koennen
+        names: Dict[tuple, str] = {}
+        for el in res.get("elements") or []:
+            key = (el.get("type"), el.get("id"))
+            names[key] = el.get("name") or el.get("longName") or ""
+        return periods, names
 
     def fetch_extras(self, element_id: int, element_type: int,
                      start: date, end: date) -> Dict[str, LessonExtras]:
@@ -125,7 +149,7 @@ class UntisRestSession:
         out: Dict[str, LessonExtras] = {}
         for monday in _mondays(start, end):
             try:
-                periods = self._week_data(element_id, element_type, monday)
+                periods, names = self._week_data(element_id, element_type, monday)
             except Exception as e:
                 logger.warning("REST-Woche %s nicht abrufbar: %s", monday, e)
                 continue
@@ -143,6 +167,31 @@ class UntisRestSession:
                     url = _clean_url(vc.get("videoCallUrl"))
                     if url:
                         ex.meeting_url = url
+
+                ex.cell_state = p.get("cellState")
+
+                # Verlegte Stunde: rescheduleInfo zeigt auf den jeweils
+                # anderen Termin. isSource=True -> diese Stunde ist das
+                # Original und findet woanders statt.
+                ri = p.get("rescheduleInfo") or {}
+                if ri.get("date"):
+                    slot = (int(ri["date"]), int(ri.get("startTime") or 0))
+                    if ri.get("isSource"):
+                        ex.moved_to = slot
+                    else:
+                        ex.moved_from = slot
+
+                # Vertretungen: orgId haelt das ersetzte Element
+                for el in p.get("elements") or []:
+                    org_id = el.get("orgId")
+                    if not org_id:
+                        continue
+                    et = el.get("type")
+                    label = ELEMENT_LABELS.get(et, "Element")
+                    vorher = names.get((et, org_id), str(org_id))
+                    nachher = names.get((et, el.get("id")), str(el.get("id")))
+                    if vorher != nachher:
+                        ex.substitutions.append((label, vorher, nachher))
 
                 texts = [p.get(k) for k in
                          ("lessonText", "periodText", "periodInfo", "substText")]

@@ -5,18 +5,45 @@ import hashlib
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from email.utils import format_datetime
 from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
-from .config import AccountConfig, Config
+from .config import AccountConfig, AppConfig, Config
 from .untis_client import UntisClient
 from .ics import events_to_ics
 from .logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+def compute_interval_minutes(app: "AppConfig", now_local: Optional[datetime] = None) -> int:
+    """Wartezeit bis zum naechsten Hintergrund-Refresh, in Minuten.
+
+    Haeufig waehrend der aktiven Stunden, sonst selten - ein Stundenplan
+    aendert sich nachts nicht, und dauerhaft im gleichen Takt abzufragen
+    belastet WebUntis ohne Nutzen.
+    """
+    if app.refresh_idle_minutes <= 0:
+        return app.refresh_interval_minutes
+
+    if now_local is None:
+        try:
+            now_local = datetime.now(ZoneInfo(app.timezone))
+        except Exception:
+            now_local = datetime.now()
+
+    start, end = app.active_hours_start, app.active_hours_end
+    hour = now_local.hour
+    if start <= end:
+        active = start <= hour < end
+    else:
+        # Fenster ueber Mitternacht, z. B. 22 bis 6
+        active = hour >= start or hour < end
+    return app.refresh_interval_minutes if active else app.refresh_idle_minutes
 
 
 class FeedState:
@@ -35,6 +62,8 @@ def create_app(config_path: str) -> FastAPI:
     client = UntisClient(cfg.app)
     out_dir = Path(cfg.app.output_dir)
     states: Dict[str, FeedState] = {a.key: FeedState() for a in cfg.accounts}
+    # Verhindert, dass parallele Anfragen denselben Account gleichzeitig abrufen
+    locks: Dict[str, asyncio.Lock] = {a.key: asyncio.Lock() for a in cfg.accounts}
 
     def refresh_account(account: AccountConfig) -> Optional[bytes]:
         """Holt frische Daten und schreibt sie.
@@ -75,22 +104,27 @@ def create_app(config_path: str) -> FastAPI:
         return ics_bytes
 
     async def refresh_loop() -> None:
-        interval = cfg.app.refresh_interval_minutes
         while True:
             for account in cfg.active_accounts:
                 try:
                     await asyncio.to_thread(refresh_account, account)
                 except Exception:
                     logger.exception("Unerwarteter Fehler im Refresh von '%s'", account.key)
-            await asyncio.sleep(interval * 60)
+            minutes = compute_interval_minutes(cfg.app)
+            logger.debug("Naechster Refresh in %d Minuten", minutes)
+            await asyncio.sleep(minutes * 60)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         task = None
         if cfg.app.refresh_interval_minutes > 0:
             task = asyncio.create_task(refresh_loop())
-            logger.info("Hintergrund-Refresh alle %d Minuten aktiv",
-                        cfg.app.refresh_interval_minutes)
+            logger.info(
+                "Hintergrund-Refresh aktiv: alle %d Min zwischen %02d:00 und %02d:00, "
+                "sonst alle %d Min",
+                cfg.app.refresh_interval_minutes, cfg.app.active_hours_start,
+                cfg.app.active_hours_end, cfg.app.refresh_idle_minutes,
+            )
         try:
             yield
         finally:
@@ -127,6 +161,25 @@ def create_app(config_path: str) -> FastAPI:
             }
         return out
 
+    def _is_stale(out_file) -> bool:
+        """Muss auf Anfrage frisch geholt werden?
+
+        Bei aktivem Hintergrund-Refresh beantwortet der Server Anfragen
+        grundsaetzlich aus der Datei - das haelt die Antwortzeiten kurz und
+        erzeugt keine Last pro Abruf. Live geholt wird nur, wenn noch nichts
+        vorliegt oder der Hintergrund-Refresh offensichtlich haengt.
+        """
+        if not out_file.exists():
+            return True
+        age = datetime.now(timezone.utc) - datetime.fromtimestamp(
+            out_file.stat().st_mtime, timezone.utc)
+
+        if cfg.app.refresh_interval_minutes > 0:
+            grace = timedelta(minutes=3 * max(cfg.app.refresh_interval_minutes,
+                                              cfg.app.refresh_idle_minutes))
+            return age > grace
+        return age > timedelta(seconds=cfg.app.cache_ttl_seconds)
+
     @app.get("/calendar/{account_key}.ics")
     async def get_calendar(account_key: str, request: Request, token: Optional[str] = None):
         account = next((a for a in cfg.accounts if a.key == account_key), None)
@@ -142,15 +195,15 @@ def create_app(config_path: str) -> FastAPI:
         # Deaktivierte Accounts nie live abrufen: sonst loest jeder Abruf
         # (z. B. von Google) einen Login-Versuch aus - bei abgelaufenem
         # Passwort ein Sperr-Risiko.
-        stale = account.enabled
-        if out_file.exists() and account.enabled:
-            mtime = datetime.fromtimestamp(out_file.stat().st_mtime, timezone.utc)
-            if datetime.now(timezone.utc) - mtime < timedelta(seconds=cfg.app.cache_ttl_seconds):
-                stale = False
+        stale = account.enabled and _is_stale(out_file)
 
         ics_bytes: Optional[bytes] = None
         if stale:
-            ics_bytes = await asyncio.to_thread(refresh_account, account)
+            async with locks[account.key]:
+                # Zweite Pruefung: waehrend des Wartens kann ein anderer
+                # Request (oder der Hintergrund-Refresh) schon fertig sein.
+                if _is_stale(out_file):
+                    ics_bytes = await asyncio.to_thread(refresh_account, account)
 
         if ics_bytes is None:
             # Frischer Abruf nicht möglich (oder nicht nötig) -> letzten guten Stand liefern

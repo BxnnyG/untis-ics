@@ -2,14 +2,18 @@ app:
   timezone: "Europe/Berlin"
   window_days_before: 3
   window_days_after: 28
-  cache_ttl_seconds: 600
   output_dir: "./out"
   mode: "server"               # "cli" oder "server"
   merge_consecutive: true      # Doppelstunden zu EINEM Termin zusammenfassen
   subject_style: "long"        # long | short | both - Fach in der Terminueberschrift
   cancelled_style: "mark"      # mark | status | hide - siehe README
-  fetch_online_info: true      # Online-Unterricht + Meeting-Links per REST nachladen
-  refresh_interval_minutes: 30 # Hintergrund-Aktualisierung im Server-Modus (0 = aus)
+  fetch_online_info: true      # Online-Unterricht, Verlegungen, Vertretungen per REST
+  # Hintergrund-Aktualisierung: tagsueber haeufig, nachts selten (0 = aus)
+  refresh_interval_minutes: 15
+  refresh_idle_minutes: 120
+  active_hours_start: 6
+  active_hours_end: 22
+  cache_ttl_seconds: 600       # nur bei refresh_interval_minutes: 0 relevant
 
 server:
   etag: true

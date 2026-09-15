@@ -71,6 +71,7 @@ class UntisClient:
                 logger.info("REST: %d Stunde(n) als Online-Unterricht markiert", online_count)
 
         events = [self._map_raw_to_event(r, account, extras) for r in raw_list]
+        self._link_moved_lessons(events)
         events = [e for e in events if self._filter_event(e, account)]
         if not account.include_cancelled:
             events = [e for e in events if e.status != "cancelled"]
@@ -122,6 +123,8 @@ class UntisClient:
         if r.get("cancelled") or code in {"cancelled", "canceled", "cancel"}:
             status = "cancelled"
         elif code == "irregular":
+            # "irregular" heisst nur "irgendwas weicht ab". Was genau, sagt
+            # erst die REST-Ansicht (verlegt vs. Vertretung).
             status = "substitution"
         else:
             status = "scheduled"
@@ -136,11 +139,21 @@ class UntisClient:
 
         online = False
         meeting_url = None
+        moved_from = moved_to = None
+        substitutions: List[tuple] = []
         extra = (extras or {}).get(source_id)
         if extra is not None:
             online = extra.online
             meeting_url = extra.meeting_url
             note_parts.extend(extra.texts)
+            substitutions = list(extra.substitutions)
+            moved_from = self._slot_to_dt(extra.moved_from, tz)
+            moved_to = self._slot_to_dt(extra.moved_to, tz)
+
+            if extra.cell_state == "SHIFT" or moved_from:
+                status = "moved"
+            elif substitutions and status == "scheduled":
+                status = "substitution"
 
         notes = " | ".join(dict.fromkeys(note_parts)) or None
 
@@ -171,7 +184,49 @@ class UntisClient:
             room_long=room_long,
             online=online,
             meeting_url=meeting_url,
+            moved_from=moved_from,
+            moved_to=moved_to,
+            substitutions=substitutions,
         )
+
+    @staticmethod
+    def _slot_to_dt(slot: Optional[tuple], tz: str) -> Optional[datetime]:
+        """(20260922, 1700) -> datetime 2026-09-22 17:00 in der Zielzone."""
+        if not slot:
+            return None
+        ymd, hhmm = slot
+        ymd = str(ymd)
+        if len(ymd) != 8 or not ymd.isdigit():
+            return None
+        try:
+            return tz_aware(
+                datetime(int(ymd[0:4]), int(ymd[4:6]), int(ymd[6:8]),
+                         int(hhmm) // 100, int(hhmm) % 100),
+                tz,
+            )
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _link_moved_lessons(events: List[LessonEvent]) -> None:
+        """Entfallene Quell-Stunde mit ihrem neuen Termin verknuepfen.
+
+        Die REST-Ansicht liefert entfallene Stunden nicht mit, kennt aber bei
+        der verlegten Stunde den Ursprungstermin. Daraus laesst sich die
+        Gegenrichtung ergaenzen, damit am entfallenen Termin steht, wohin die
+        Stunde verschoben wurde.
+        """
+        by_slot: Dict[tuple, LessonEvent] = {
+            (e.start.date(), e.start.hour, e.start.minute): e
+            for e in events if e.status == "cancelled"
+        }
+        for ev in events:
+            if not ev.moved_from:
+                continue
+            key = (ev.moved_from.date(), ev.moved_from.hour, ev.moved_from.minute)
+            src = by_slot.get(key)
+            if src is not None and src.moved_to is None:
+                src.moved_to = ev.start
 
     def _parse_times(self, d: Dict[str, Any], tz: str) -> tuple[datetime, datetime]:
         if d.get("start") and d.get("end"):
@@ -245,6 +300,9 @@ class UntisClient:
                 and prev.subject_long == ev.subject_long
                 and prev.online == ev.online
                 and prev.meeting_url == ev.meeting_url
+                and prev.moved_from == ev.moved_from
+                and prev.moved_to == ev.moved_to
+                and prev.substitutions == ev.substitutions
                 and prev.groups == ev.groups
                 and prev.status == ev.status
                 and prev.notes == ev.notes

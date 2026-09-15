@@ -143,3 +143,54 @@ def test_room_wins_over_online_in_summary():
 def test_cancelled_beats_online_marker():
     cal = Calendar.from_ical(events_to_ics([ev(status="cancelled", online=True)]))
     assert str(cal.walk("VEVENT")[0]["SUMMARY"]).startswith("❌")
+
+
+# --- Verlegung und Vertretung in der Anzeige ---------------------------------
+
+from datetime import datetime as _dt
+
+
+def test_cancelled_names_new_slot_in_title():
+    """Beim Entfall interessiert vor allem, wohin die Stunde verlegt wurde."""
+    e = ev(status="cancelled",
+           moved_to=_dt(2026, 9, 15, 18, 40, tzinfo=timezone.utc))
+    su = str(Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]["SUMMARY"])
+    assert su.startswith("❌ Verlegt")
+    assert "Di 15.09. 18:40" in su
+
+
+def test_cancelled_drops_room_from_title_and_location():
+    """Der Raum einer entfallenen Stunde ist belanglos."""
+    cal = Calendar.from_ical(events_to_ics([ev(status="cancelled", room="R101")]))
+    vev = cal.walk("VEVENT")[0]
+    assert "R101" not in str(vev["SUMMARY"])
+    assert "LOCATION" not in vev
+
+
+def test_moved_lesson_shows_origin():
+    e = ev(status="moved",
+           moved_from=_dt(2026, 9, 22, 17, 0, tzinfo=timezone.utc))
+    vev = Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]
+    assert str(vev["SUMMARY"]).startswith("➡️")
+    assert "Di 22.09. 17:00" in str(vev["DESCRIPTION"])
+
+
+def test_substitution_lists_what_changed():
+    e = ev(status="substitution", substitutions=[("Lehrer", "VS", "MY")])
+    desc = str(Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]["DESCRIPTION"])
+    assert "Lehrer: MY statt VS" in desc
+
+
+def test_status_word_comes_first_for_truncation():
+    """Google kuerzt Titel in der Gitteransicht - der Zustand muss vorne stehen."""
+    e = ev(status="cancelled", subject_long="Ein sehr langer Fachname hier")
+    su = str(Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]["SUMMARY"])
+    assert su[:12].startswith("❌ Entfällt")
+
+
+def test_categories_reflect_state():
+    for status, cat in (("cancelled", "Entfall"), ("moved", "Verlegt"),
+                        ("substitution", "Vertretung")):
+        cal = Calendar.from_ical(events_to_ics([ev(status=status)]))
+        cats = cal.walk("VEVENT")[0]["CATEGORIES"].cats
+        assert cat in [str(c) for c in cats], (status, cats)
