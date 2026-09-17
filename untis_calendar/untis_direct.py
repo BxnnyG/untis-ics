@@ -10,6 +10,7 @@ from typing import Any
 
 import requests
 
+from .retry import with_retry
 from .school_lookup import resolve_server
 
 logger = logging.getLogger(__name__)
@@ -83,9 +84,18 @@ class DirectUntisSession:
             headers["Cookie"] = f"JSESSIONID={self.session_id}"
 
         logger.debug("JSON-RPC Request: %s", method)
-        resp = self.session.post(
-            self.url, json=payload, headers=headers, verify=self.verify_ssl, timeout=30
-        )
+
+        def post():
+            r = self.session.post(
+                self.url, json=payload, headers=headers, verify=self.verify_ssl, timeout=30
+            )
+            # 5xx/429 in with_retry sichtbar machen; 4xx bleibt unberuehrt,
+            # damit ein abgelehnter Login nicht wiederholt wird.
+            if r.status_code in (429, 500, 502, 503, 504):
+                r.raise_for_status()
+            return r
+
+        resp = with_retry(post, description=f"JSON-RPC {method}")
 
         if resp.status_code == 404:
             raise UntisEndpointError(
@@ -197,6 +207,28 @@ class DirectUntisSession:
 
         result = self._rpc_request("getTimetable", {"options": options})
         return result if isinstance(result, list) else []
+
+    def timegrid(self) -> dict[int, str]:
+        """Stundenraster: Startzeit (HHMM) -> Name der Stunde ("1", "2", ...).
+
+        Untis liefert das Raster pro Wochentag. Die Zeiten sind in aller Regel
+        identisch; bei Abweichungen gewinnt der erste Tag, der eine Zeit
+        definiert - fuer eine Beschriftung reicht das.
+        """
+        try:
+            days = self._rpc_request("getTimegridUnits", {})
+        except UntisError as e:
+            logger.warning("Stundenraster nicht abrufbar: %s", e)
+            return {}
+
+        grid: dict[int, str] = {}
+        for day in days or []:
+            for unit in day.get("timeUnits") or []:
+                start = unit.get("startTime")
+                name = unit.get("name")
+                if start is not None and name and int(start) not in grid:
+                    grid[int(start)] = str(name)
+        return grid
 
 
 @contextmanager

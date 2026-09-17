@@ -96,7 +96,8 @@ def test_status_without_configured_token_stays_hidden(tmp_path, monkeypatch):
 
 def test_status_content_when_authorised(client):
     body = client.get("/status", params={"token": "statusgeheim"}).json()
-    assert body["aus"]["enabled"] is False
+    assert body["accounts"]["aus"]["enabled"] is False
+    assert "healthy" in body and "problems" in body
 
 
 def test_health_stays_public(client):

@@ -22,6 +22,8 @@ from typing import Any
 
 import requests
 
+from .retry import with_retry
+
 logger = logging.getLogger(__name__)
 
 URL_RE = re.compile(r"https?://[^\s<>\"')]+")
@@ -36,6 +38,7 @@ ELEMENT_LABELS = {1: "Klasse", 2: "Lehrer", 3: "Fach", 4: "Raum"}
 class LessonExtras:
     __slots__ = (
         "cell_state",
+        "color",
         "meeting_url",
         "moved_from",
         "moved_to",
@@ -55,6 +58,8 @@ class LessonExtras:
         self.moved_to: tuple | None = None
         # Vertretungen als (Art, vorher, nachher), z. B. ("Lehrer", "VS", "MY")
         self.substitutions: list[tuple] = []
+        # Fachfarbe aus Untis als Hex, z. B. "#80ffff"
+        self.color: str | None = None
 
     def __repr__(self) -> str:  # pragma: no cover - nur Debug
         return (
@@ -133,35 +138,43 @@ class UntisRestSession:
 
     def _week_data(
         self, element_id: int, element_type: int, day: date
-    ) -> tuple[list[dict[str, Any]], dict[tuple, str]]:
-        resp = self.session.get(
-            f"{self.server}/WebUntis/api/public/timetable/weekly/data",
-            params={
-                "elementType": element_type,
-                "elementId": element_id,
-                "date": day.isoformat(),
-                "formatId": 1,
-            },
-            verify=self.verify_ssl,
-            timeout=self.timeout,
+    ) -> tuple[list[dict[str, Any]], dict[tuple, str], dict[tuple, str]]:
+        resp = with_retry(
+            lambda: self.session.get(
+                f"{self.server}/WebUntis/api/public/timetable/weekly/data",
+                params={
+                    "elementType": element_type,
+                    "elementId": element_id,
+                    "date": day.isoformat(),
+                    "formatId": 1,
+                },
+                verify=self.verify_ssl,
+                timeout=self.timeout,
+            ),
+            description="REST-Wochenabruf",
         )
         resp.raise_for_status()
         data = resp.json()
         try:
             res = data["data"]["result"]["data"]
         except (KeyError, TypeError):
-            return [], {}
+            return [], {}, {}
 
         periods = res.get("elementPeriods", {}).get(str(element_id)) or []
         if not isinstance(periods, list):
             periods = []
 
-        # Register (typ, id) -> Name, um orgId aufloesen zu koennen
+        # Register (typ, id) -> Name, um orgId aufloesen zu koennen,
+        # plus die von der Schule vergebene Fachfarbe.
         names: dict[tuple, str] = {}
+        colors: dict[tuple, str] = {}
         for el in res.get("elements") or []:
             key = (el.get("type"), el.get("id"))
             names[key] = el.get("name") or el.get("longName") or ""
-        return periods, names
+            back = el.get("backColor")
+            if back:
+                colors[key] = back if str(back).startswith("#") else f"#{back}"
+        return periods, names, colors
 
     def fetch_extras(
         self, element_id: int, element_type: int, start: date, end: date
@@ -170,7 +183,7 @@ class UntisRestSession:
         out: dict[str, LessonExtras] = {}
         for monday in _mondays(start, end):
             try:
-                periods, names = self._week_data(element_id, element_type, monday)
+                periods, names, colors = self._week_data(element_id, element_type, monday)
             except Exception as e:
                 logger.warning("REST-Woche %s nicht abrufbar: %s", monday, e)
                 continue
@@ -190,6 +203,13 @@ class UntisRestSession:
                         ex.meeting_url = url
 
                 ex.cell_state = p.get("cellState")
+
+                # Fachfarbe: das Fach-Element (Typ 3) traegt die von der
+                # Schule vergebene Farbe.
+                for el in p.get("elements") or []:
+                    if el.get("type") == 3:
+                        ex.color = colors.get((3, el.get("id")))
+                        break
 
                 # Verlegte Stunde: rescheduleInfo zeigt auf den jeweils
                 # anderen Termin. isSource=True -> diese Stunde ist das

@@ -12,6 +12,32 @@ logger = logging.getLogger(__name__)
 # Root-only Secrets-Datei; systemd reicht die Werte per EnvironmentFile weiter.
 SECRETS_FILE = "/etc/untis-sync.env"
 
+# Praefix fuer Umgebungsvariablen, die Werte aus der config.yaml ueberschreiben.
+# UNTIS_APP_TIMEZONE -> app.timezone, UNTIS_SERVER_DOCS_ENABLED -> server.docs_enabled.
+# Gedacht fuer Container, wo man nicht fuer jede Kleinigkeit eine Datei mounten will.
+ENV_PREFIX = "UNTIS_"
+
+
+def _apply_env_overrides(data: dict) -> list[str]:
+    """Ueberschreibt app.* und server.* aus der Umgebung.
+
+    Gibt die angewandten Schluessel zurueck, damit der Aufrufer sie loggen
+    kann - stillschweigend veraenderte Konfiguration ist schwer zu debuggen.
+    """
+    applied: list[str] = []
+    for section, model in (("app", AppConfig), ("server", ServerConfig)):
+        for field in model.model_fields:
+            env_name = f"{ENV_PREFIX}{section.upper()}_{field.upper()}"
+            raw = os.getenv(env_name)
+            if raw is None:
+                continue
+            data.setdefault(section, {})
+            # Die Typkonvertierung uebernimmt pydantic bei der Validierung;
+            # bei bool waere "false" allerdings wahr, das faengt pydantic ab.
+            data[section][field] = raw
+            applied.append(f"{env_name} -> {section}.{field}")
+    return applied
+
 
 class ElementConfig(BaseModel):
     type: str | None = Field(None, description="student|teacher|class|subject|room")
@@ -77,6 +103,8 @@ class AppConfig(BaseModel):
     merge_consecutive: bool = True  # Doppelstunden zu einem Termin zusammenfassen
     subject_style: str = "long"  # long | short | both - Fach in der Terminueberschrift
     fetch_online_info: bool = True  # Online-Unterricht/Meeting-Links per REST nachladen
+    use_untis_colors: bool = True  # Fachfarben aus Untis in den Kalender uebernehmen
+    show_period_numbers: bool = True  # "3. Stunde" in der Beschreibung ausweisen
     cancelled_style: str = "mark"  # mark | status | hide - siehe README
     # Hintergrund-Aktualisierung im Server-Modus (0 = aus).
     # Waehrend der aktiven Stunden wird haeufig, sonst selten abgerufen -
@@ -133,6 +161,21 @@ class ServerConfig(BaseModel):
 
     # Token aus den Zugriffslogs entfernen (sie landen sonst im Journal)
     redact_tokens_in_logs: bool = True
+
+    # Lebenszeichen an einen externen Ueberwachungsdienst (Healthchecks.io,
+    # Uptime Kuma o. ae.). Gepingt wird nur, wenn alle aktiven Accounts
+    # frische Daten haben - bleibt der Ping aus, schlaegt dort der Alarm an.
+    heartbeat_url: str | None = None
+    heartbeat_url_env: str | None = None
+    # Ab welchem Alter Daten als veraltet gelten. 0 = das Dreifache des
+    # Refresh-Intervalls verwenden.
+    stale_after_minutes: int = 0
+
+    @property
+    def heartbeat(self) -> str | None:
+        return self.heartbeat_url or (
+            os.getenv(self.heartbeat_url_env) if self.heartbeat_url_env else None
+        )
 
     @property
     def status_secret(self) -> str | None:
@@ -204,6 +247,10 @@ class Config(BaseModel):
         data = yaml.safe_load(p.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError(f"Config ist leer oder kein YAML-Mapping: {p}")
+
+        for note in _apply_env_overrides(data):
+            logger.info("Konfiguration aus Umgebung: %s", note)
+
         cfg = cls.model_validate(data)
         Path(cfg.app.output_dir).mkdir(parents=True, exist_ok=True)
         return cfg

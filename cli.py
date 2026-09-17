@@ -60,6 +60,8 @@ def cmd_generate(args) -> int:
             refresh_minutes=cfg.app.refresh_interval_minutes or 60,
             subject_style=cfg.app.subject_style,
             cancelled_style=cfg.app.cancelled_style,
+            timezone_name=cfg.app.timezone,
+            use_colors=cfg.app.use_untis_colors,
         )
         out_file.write_bytes(ics_bytes)
         logger.info("geschrieben: %s (%d Termine, %d bytes)", out_file, len(events), len(ics_bytes))

@@ -35,6 +35,11 @@ class LessonEvent:
     moved_to: datetime | None = None  # diese Stunde findet dort statt
     substitutions: list[tuple] = field(default_factory=list)
 
+    # Fachfarbe aus Untis als Hex ("#80ffff")
+    color: str | None = None
+    # Namen der belegten Unterrichtsstunden aus dem Untis-Raster ("1", "2")
+    periods: list[str] = field(default_factory=list)
+
     def subject_display(self, style: str = "long") -> str:
         """Fach fuer die Terminueberschrift."""
         if style == "short" or not self.subject_long:
@@ -42,6 +47,14 @@ class LessonEvent:
         if style == "both" and self.subject_long != self.subject:
             return f"{self.subject} - {self.subject_long}"
         return self.subject_long
+
+    def period_display(self) -> str | None:
+        """ "1. Stunde" bzw. "1.-2. Stunde" bei zusammengefassten Doppelstunden."""
+        if not self.periods:
+            return None
+        if len(self.periods) == 1:
+            return f"{self.periods[0]}. Stunde"
+        return f"{self.periods[0]}.-{self.periods[-1]}. Stunde"
 
     def teacher_display(self) -> list[str]:
         """Lehrer mit Klarnamen, Kuerzel nur als Rueckfall."""

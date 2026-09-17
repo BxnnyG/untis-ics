@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
+from . import heartbeat
 from .config import AccountConfig, AppConfig, Config
 from .ics import events_to_ics
 from .logging_config import setup_logging
@@ -49,6 +50,14 @@ def token_matches(expected: str | None, given: str | None) -> bool:
     if not given:
         return False
     return secrets.compare_digest(expected, given)
+
+
+def stale_threshold_minutes(cfg: Config) -> int:
+    """Ab welchem Alter gelten die Daten eines Accounts als veraltet."""
+    if cfg.server.stale_after_minutes > 0:
+        return cfg.server.stale_after_minutes
+    base = max(cfg.app.refresh_interval_minutes, cfg.app.refresh_idle_minutes)
+    return max(3 * base, 30)
 
 
 def compute_interval_minutes(app: AppConfig, now_local: datetime | None = None) -> int:
@@ -126,6 +135,8 @@ def create_app(config_path: str) -> FastAPI:
             refresh_minutes=cfg.app.refresh_interval_minutes or 60,
             subject_style=cfg.app.subject_style,
             cancelled_style=cfg.app.cancelled_style,
+            timezone_name=cfg.app.timezone,
+            use_colors=cfg.app.use_untis_colors,
         )
         out_file.write_bytes(ics_bytes)
         state.last_success = datetime.now(timezone.utc)
@@ -134,6 +145,20 @@ def create_app(config_path: str) -> FastAPI:
         logger.info("Aktualisiert: %s (%d Termine)", out_file, len(events))
         return ics_bytes
 
+    def healthy() -> tuple[bool, list[str]]:
+        """Haben alle aktiven Accounts frische Daten?"""
+        limit = timedelta(minutes=stale_threshold_minutes(cfg))
+        now = datetime.now(timezone.utc)
+        problems = []
+        for account in cfg.active_accounts:
+            st = states[account.key]
+            if st.last_success is None:
+                problems.append(f"{account.key}: noch kein erfolgreicher Abruf")
+            elif now - st.last_success > limit:
+                age = int((now - st.last_success).total_seconds() // 60)
+                problems.append(f"{account.key}: letzter Erfolg vor {age} Min")
+        return not problems, problems
+
     async def refresh_loop() -> None:
         while True:
             for account in cfg.active_accounts:
@@ -141,6 +166,16 @@ def create_app(config_path: str) -> FastAPI:
                     await asyncio.to_thread(refresh_account, account)
                 except Exception:
                     logger.exception("Unerwarteter Fehler im Refresh von '%s'", account.key)
+
+            url = cfg.server.heartbeat
+            if url:
+                ok, problems = healthy()
+                if not ok:
+                    logger.warning("Heartbeat meldet Probleme: %s", "; ".join(problems))
+                await asyncio.to_thread(
+                    heartbeat.send, url, ok, 10, "; ".join(problems) or "alle Accounts aktuell"
+                )
+
             minutes = compute_interval_minutes(cfg.app)
             logger.debug("Naechster Refresh in %d Minuten", minutes)
             await asyncio.sleep(minutes * 60)
@@ -211,11 +246,17 @@ def create_app(config_path: str) -> FastAPI:
         if not expected or not token_matches(expected, token):
             raise HTTPException(404, detail="Not Found")
 
-        out = {}
+        ok, problems = healthy()
+        out: dict = {
+            "healthy": ok,
+            "problems": problems,
+            "stale_after_minutes": stale_threshold_minutes(cfg),
+            "accounts": {},
+        }
         for acc in cfg.accounts:
             st = states[acc.key]
             f = out_dir / acc.calendar.file_name
-            out[acc.key] = {
+            out["accounts"][acc.key] = {
                 "enabled": acc.enabled,
                 "school": acc.school,
                 "file": str(f),

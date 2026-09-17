@@ -52,6 +52,7 @@ class UntisClient:
             raw_list = sess.timetable(start=start, end=end, element=self._element_kwargs(account))
             logger.info("Empfangen: %d Roheinträge für %s", len(raw_list), account.key)
             person_id, person_type = sess.person_id, sess.person_type
+            timegrid = sess.timegrid() if self.app.show_period_numbers else {}
 
         # Online-Unterricht und Stundentexte kennt nur die REST-Ansicht.
         # Schlaegt das fehl, laeuft der Sync ohne diese Extras weiter.
@@ -72,7 +73,7 @@ class UntisClient:
             if online_count:
                 logger.info("REST: %d Stunde(n) als Online-Unterricht markiert", online_count)
 
-        events = [self._map_raw_to_event(r, account, extras) for r in raw_list]
+        events = [self._map_raw_to_event(r, account, extras, timegrid) for r in raw_list]
         self._link_moved_lessons(events)
         events = [e for e in events if self._filter_event(e, account)]
         if not account.include_cancelled:
@@ -102,7 +103,11 @@ class UntisClient:
         return {"id": el.id, "type": type_id}
 
     def _map_raw_to_event(
-        self, r: dict[str, Any], account: AccountConfig, extras: dict[str, Any] | None = None
+        self,
+        r: dict[str, Any],
+        account: AccountConfig,
+        extras: dict[str, Any] | None = None,
+        timegrid: dict[int, str] | None = None,
     ) -> LessonEvent:
         tz = self.app.timezone
         school = account.school
@@ -144,6 +149,7 @@ class UntisClient:
         online = False
         meeting_url = None
         moved_from = moved_to = None
+        color = None
         substitutions: list[tuple] = []
         extra = (extras or {}).get(source_id)
         if extra is not None:
@@ -153,6 +159,8 @@ class UntisClient:
             substitutions = list(extra.substitutions)
             moved_from = self._slot_to_dt(extra.moved_from, tz)
             moved_to = self._slot_to_dt(extra.moved_to, tz)
+            if account.color_map.get(subject) is None:
+                color = extra.color
 
             if extra.cell_state == "SHIFT" or moved_from:
                 status = "moved"
@@ -193,7 +201,20 @@ class UntisClient:
             moved_from=moved_from,
             moved_to=moved_to,
             substitutions=substitutions,
+            color=color,
+            periods=self._periods_for(r, timegrid),
         )
+
+    @staticmethod
+    def _periods_for(r: dict[str, Any], timegrid: dict[int, str] | None) -> list[str]:
+        """Name der Unterrichtsstunde zur Startzeit, falls das Raster bekannt ist."""
+        if not timegrid:
+            return []
+        start = r.get("startTime")
+        if start is None:
+            return []
+        name = timegrid.get(int(start))
+        return [name] if name else []
 
     @staticmethod
     def _slot_to_dt(slot: tuple | None, tz: str) -> datetime | None:
@@ -316,6 +337,9 @@ class UntisClient:
                 and prev.end <= ev.start <= prev.end + timedelta(minutes=30)
             ):
                 prev.end = max(prev.end, ev.end)
+                for name in ev.periods:
+                    if name not in prev.periods:
+                        prev.periods.append(name)
                 continue
             merged.append(ev)
         return merged

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from icalendar import Calendar, Event, vText
 from icalendar.prop import vDuration
 
+from .colors import nearest_css_name, normalise_hex
 from .models import LessonEvent
 
 WEEKDAYS = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
@@ -97,6 +98,10 @@ def _build_description(e: LessonEvent) -> str:
     if e.groups:
         body.append(f"Klasse: {', '.join(e.groups)}")
 
+    stunde = e.period_display()
+    if stunde:
+        body.append(stunde)
+
     if e.notes:
         body.append(e.notes)
     body.append(f"Quelle: {e.source_school}/{e.account_key}")
@@ -126,6 +131,8 @@ def events_to_ics(
     refresh_minutes: int = 60,
     subject_style: str = "long",
     cancelled_style: str = "mark",
+    timezone_name: str = "Europe/Berlin",
+    use_colors: bool = True,
 ) -> bytes:
     cal = Calendar()
     cal.add("prodid", "-//untis-calendar//v1//DE")
@@ -137,7 +144,7 @@ def events_to_ics(
         # Sorgt dafür, dass Google/Apple den Kalender sinnvoll benennen
         cal.add("x-wr-calname", calendar_name)
         cal.add("name", calendar_name)
-    cal.add("x-wr-timezone", "Europe/Berlin")
+    cal.add("x-wr-timezone", timezone_name)
 
     # Refresh-Hinweis für Clients (Google ignoriert das teilweise, schadet aber nicht)
     dur = vDuration(timedelta(minutes=refresh_minutes))
@@ -184,6 +191,17 @@ def events_to_ics(
         else:
             ve.add("status", "CONFIRMED")
             ve.add("transp", "OPAQUE")
+
+        # RFC 7986 erlaubt fuer COLOR nur CSS3-Farbnamen, deshalb der
+        # naechstgelegene Name; den exakten Hexwert nimmt Apple entgegen.
+        # Google ignoriert beides in abonnierten Kalendern.
+        if use_colors and e.status != "cancelled":
+            css = nearest_css_name(e.color)
+            if css:
+                ve.add("color", css)
+            hexval = normalise_hex(e.color)
+            if hexval:
+                ve.add("x-apple-calendar-color", hexval)
 
         ve.add("categories", _categories(e))
         cal.add_component(ve)

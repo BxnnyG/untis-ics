@@ -15,6 +15,8 @@ from typing import Any
 
 import requests
 
+from .retry import with_retry
+
 logger = logging.getLogger(__name__)
 
 SCHOOLSEARCH_URL = "https://schoolsearch.webuntis.com/schoolquery2"
@@ -32,7 +34,10 @@ def search_schools(query: str, timeout: int = 20) -> list[dict[str, Any]]:
         "params": [{"search": query}],
         "jsonrpc": "2.0",
     }
-    resp = requests.post(SCHOOLSEARCH_URL, json=payload, timeout=timeout)
+    resp = with_retry(
+        lambda: requests.post(SCHOOLSEARCH_URL, json=payload, timeout=timeout),
+        description="Schulsuche",
+    )
     resp.raise_for_status()
     data = resp.json()
     if "error" in data:
