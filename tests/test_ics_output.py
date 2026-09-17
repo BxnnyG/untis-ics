@@ -2,19 +2,19 @@ from datetime import datetime, timezone
 
 from icalendar import Calendar
 
-from untis_calendar.models import LessonEvent
 from untis_calendar.ics import events_to_ics
+from untis_calendar.models import LessonEvent
 
 
 def ev(**over):
-    d = dict(
-        uid="u1@untis-calendar",
-        start=datetime(2026, 9, 9, 7, 30, tzinfo=timezone.utc),
-        end=datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc),
-        subject="D", room="R101", teachers=["LR"], groups=["10A"],
-        status="scheduled", notes=None, color_key=None,
-        source_id="1", source_school="musterschule", account_key="schueler1",
-    )
+    d = {
+        "uid": "u1@untis-calendar",
+        "start": datetime(2026, 9, 9, 7, 30, tzinfo=timezone.utc),
+        "end": datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc),
+        "subject": "D", "room": "R101", "teachers": ["LR"], "groups": ["10A"],
+        "status": "scheduled", "notes": None, "color_key": None,
+        "source_id": "1", "source_school": "musterschule", "account_key": "schueler1",
+    }
     d.update(over)
     return LessonEvent(**d)
 

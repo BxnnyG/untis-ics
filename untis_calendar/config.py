@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -15,43 +14,43 @@ SECRETS_FILE = "/etc/untis-sync.env"
 
 
 class ElementConfig(BaseModel):
-    type: Optional[str] = Field(None, description="student|teacher|class|subject|room")
-    name: Optional[str] = None
-    id: Optional[int] = None
+    type: str | None = Field(None, description="student|teacher|class|subject|room")
+    name: str | None = None
+    id: int | None = None
 
 
 class CalendarConfig(BaseModel):
     file_name: str
-    display_name: Optional[str] = None  # Kalendername in Google/Apple
+    display_name: str | None = None  # Kalendername in Google/Apple
     web_feed: bool = True
-    token: Optional[str] = None  # Direkt in YAML
-    token_env: Optional[str] = None  # Fallback: aus ENV
+    token: str | None = None  # Direkt in YAML
+    token_env: str | None = None  # Fallback: aus ENV
 
     @property
-    def feed_token(self) -> Optional[str]:
+    def feed_token(self) -> str | None:
         """Token für Feed-Auth: erst YAML, dann ENV."""
         return self.token or (os.getenv(self.token_env) if self.token_env else None)
 
 
 class FiltersConfig(BaseModel):
-    include_subjects: List[str] = Field(default_factory=list)
-    exclude_subjects: List[str] = Field(default_factory=list)
+    include_subjects: list[str] = Field(default_factory=list)
+    exclude_subjects: list[str] = Field(default_factory=list)
 
 
 class AccountConfig(BaseModel):
     key: str
     school: str
     username: str
-    password: Optional[str] = None  # Direkt in YAML
-    password_env: Optional[str] = None  # Fallback: aus ENV
+    password: str | None = None  # Direkt in YAML
+    password_env: str | None = None  # Fallback: aus ENV
     # Optional: leer lassen, dann wird der Server automatisch aufgelöst
-    server: Optional[str] = None
+    server: str | None = None
     verify_ssl: bool = True
     enabled: bool = True
     include_cancelled: bool = True  # Entfallene Stunden als CANCELLED mitliefern
-    element: Optional[ElementConfig] = None
+    element: ElementConfig | None = None
     filters: FiltersConfig = Field(default_factory=FiltersConfig)
-    color_map: Dict[str, str] = Field(default_factory=dict)
+    color_map: dict[str, str] = Field(default_factory=dict)
     calendar: CalendarConfig
 
     def get_password(self) -> str:
@@ -126,8 +125,8 @@ class ServerConfig(BaseModel):
 
     # /status verraet Account-Keys, Schulen und Fehlertexte und ist deshalb
     # tokenpflichtig. Ohne gesetzten Token antwortet der Endpunkt mit 404.
-    status_token: Optional[str] = None
-    status_token_env: Optional[str] = None
+    status_token: str | None = None
+    status_token_env: str | None = None
 
     # X-Content-Type-Options, Referrer-Policy usw. an jede Antwort haengen
     security_headers: bool = True
@@ -136,7 +135,7 @@ class ServerConfig(BaseModel):
     redact_tokens_in_logs: bool = True
 
     @property
-    def status_secret(self) -> Optional[str]:
+    def status_secret(self) -> str | None:
         return self.status_token or (
             os.getenv(self.status_token_env) if self.status_token_env else None
         )
@@ -145,10 +144,10 @@ class ServerConfig(BaseModel):
 class Config(BaseModel):
     app: AppConfig
     server: ServerConfig = Field(default_factory=ServerConfig)
-    accounts: List[AccountConfig]
+    accounts: list[AccountConfig]
 
     @model_validator(mode="after")
-    def check_accounts(self) -> "Config":
+    def check_accounts(self) -> Config:
         keys = [a.key for a in self.accounts]
         dupes = {k for k in keys if keys.count(k) > 1}
         if dupes:
@@ -177,11 +176,11 @@ class Config(BaseModel):
         return self
 
     @property
-    def active_accounts(self) -> List[AccountConfig]:
+    def active_accounts(self) -> list[AccountConfig]:
         return [a for a in self.accounts if a.enabled]
 
     @classmethod
-    def load(cls, path: str | Path) -> "Config":
+    def load(cls, path: str | Path) -> Config:
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"Config-Datei nicht gefunden: {p}")

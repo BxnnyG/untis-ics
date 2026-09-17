@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 
 from untis_calendar.config import Config
+from untis_calendar.ics import events_to_ics
 from untis_calendar.logging_config import setup_logging
 from untis_calendar.untis_client import UntisClient
-from untis_calendar.ics import events_to_ics
 
 logger = logging.getLogger("cli")
 
@@ -106,8 +106,9 @@ def cmd_check(args) -> int:
 
 
 def cmd_serve(args) -> int:
-    from untis_calendar.server import create_app
     import uvicorn
+
+    from untis_calendar.server import create_app
 
     app = create_app(args.config)
     uvicorn.run(app, host=args.host, port=args.port)

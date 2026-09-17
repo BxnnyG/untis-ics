@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "untis-ics"
+version = "1.0.0"
+description = "Serve WebUntis timetables as subscribable ICS calendar feeds"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["webuntis", "untis", "ics", "icalendar", "timetable", "school"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Scheduling",
+]
+
+# Lower bounds are what the code actually needs; upper bounds keep a future
+# major release from breaking an unattended sync.
+dependencies = [
+    "requests>=2.31,<3",
+    "icalendar>=6.0,<7",
+    "pydantic>=2.5,<3",
+    "PyYAML>=6.0,<7",
+    "python-dotenv>=1.0,<2",
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.27,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",      # fastapi.testclient
+    "ruff>=0.6",
+]
+
+[project.scripts]
+untis-ics = "untis_calendar.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/BxnnyG/untis-ics"
+Issues = "https://github.com/BxnnyG/untis-ics/issues"
+
+[tool.setuptools]
+packages = ["untis_calendar"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "C4",       # comprehensions
+    "SIM",      # simplify
+    "RUF",
+]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # FastAPI depends on function calls in defaults
+    "RUF001",  # German text uses characters ruff flags as ambiguous
+    "RUF002",
+    "RUF003",
+    # Would force unreadable ternaries onto branches that carry an
+    # explanatory comment.
+    "SIM108",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]   # tests import after module-level fixtures on purpose

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, List, Optional
 
 from icalendar import Calendar, Event, vText
 from icalendar.prop import vDuration
@@ -47,7 +47,7 @@ def _build_summary(e: LessonEvent, subject_style: str) -> str:
 def _build_description(e: LessonEvent) -> str:
     """Details. Das Wichtigste zuerst - Google zeigt die erste Zeile
     in der Terminvorschau."""
-    head: List[str] = []
+    head: list[str] = []
 
     if e.status == "cancelled":
         if e.moved_to:
@@ -71,7 +71,7 @@ def _build_description(e: LessonEvent) -> str:
         else:
             head.append("Online-Unterricht (noch kein Link hinterlegt)")
 
-    body: List[str] = []
+    body: list[str] = []
     teachers = e.teacher_display()
     if teachers:
         # Kuerzel in Klammern, falls es sich vom Klarnamen unterscheidet
@@ -106,7 +106,7 @@ def _build_description(e: LessonEvent) -> str:
     return "\n".join(parts)
 
 
-def _categories(e: LessonEvent) -> List[str]:
+def _categories(e: LessonEvent) -> list[str]:
     cats = [e.subject]
     if e.online:
         cats.append("Online")
@@ -121,7 +121,7 @@ def _categories(e: LessonEvent) -> List[str]:
     return cats
 
 
-def events_to_ics(events: Iterable[LessonEvent], calendar_name: Optional[str] = None,
+def events_to_ics(events: Iterable[LessonEvent], calendar_name: str | None = None,
                   refresh_minutes: int = 60, subject_style: str = "long",
                   cancelled_style: str = "mark") -> bytes:
     cal = Calendar()

@@ -7,17 +7,16 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from email.utils import format_datetime
 from pathlib import Path
-from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
 from .config import AccountConfig, AppConfig, Config
-from .untis_client import UntisClient
 from .ics import events_to_ics
 from .logging_config import setup_logging
+from .untis_client import UntisClient
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ class RedactTokensFilter(logging.Filter):
         return True
 
 
-def token_matches(expected: Optional[str], given: Optional[str]) -> bool:
+def token_matches(expected: str | None, given: str | None) -> bool:
     """Zeitkonstanter Vergleich, damit sich der Token nicht erraten laesst."""
     if not expected:
         return True  # kein Token konfiguriert -> Feed ist offen
@@ -53,7 +52,7 @@ def token_matches(expected: Optional[str], given: Optional[str]) -> bool:
     return secrets.compare_digest(expected, given)
 
 
-def compute_interval_minutes(app: "AppConfig", now_local: Optional[datetime] = None) -> int:
+def compute_interval_minutes(app: AppConfig, now_local: datetime | None = None) -> int:
     """Wartezeit bis zum naechsten Hintergrund-Refresh, in Minuten.
 
     Haeufig waehrend der aktiven Stunden, sonst selten - ein Stundenplan
@@ -83,9 +82,9 @@ class FeedState:
     """Merkt sich pro Account den letzten Erfolg/Fehler für /status."""
 
     def __init__(self) -> None:
-        self.last_success: Optional[datetime] = None
-        self.last_error: Optional[str] = None
-        self.last_error_at: Optional[datetime] = None
+        self.last_success: datetime | None = None
+        self.last_error: str | None = None
+        self.last_error_at: datetime | None = None
         self.event_count: int = 0
 
 
@@ -94,11 +93,11 @@ def create_app(config_path: str) -> FastAPI:
     cfg = Config.load(config_path)
     client = UntisClient(cfg.app)
     out_dir = Path(cfg.app.output_dir)
-    states: Dict[str, FeedState] = {a.key: FeedState() for a in cfg.accounts}
+    states: dict[str, FeedState] = {a.key: FeedState() for a in cfg.accounts}
     # Verhindert, dass parallele Anfragen denselben Account gleichzeitig abrufen
-    locks: Dict[str, asyncio.Lock] = {a.key: asyncio.Lock() for a in cfg.accounts}
+    locks: dict[str, asyncio.Lock] = {a.key: asyncio.Lock() for a in cfg.accounts}
 
-    def refresh_account(account: AccountConfig) -> Optional[bytes]:
+    def refresh_account(account: AccountConfig) -> bytes | None:
         """Holt frische Daten und schreibt sie.
 
         Gibt None zurück, wenn der Abruf fehlschlug - die vorhandene Datei
@@ -200,7 +199,7 @@ def create_app(config_path: str) -> FastAPI:
         return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
 
     @app.get("/status")
-    def status(token: Optional[str] = None):
+    def status(token: str | None = None):
         """Übersicht pro Account - zeigt sofort, wenn ein Feed klemmt.
 
         Verraet Account-Keys, Schulen und Fehlertexte und ist deshalb
@@ -252,7 +251,7 @@ def create_app(config_path: str) -> FastAPI:
         return age > timedelta(seconds=cfg.app.cache_ttl_seconds)
 
     @app.get("/calendar/{account_key}.ics")
-    async def get_calendar(account_key: str, request: Request, token: Optional[str] = None):
+    async def get_calendar(account_key: str, request: Request, token: str | None = None):
         account = next((a for a in cfg.accounts if a.key == account_key), None)
 
         # Unbekannter Account und falscher Token liefern bewusst dieselbe
@@ -275,7 +274,7 @@ def create_app(config_path: str) -> FastAPI:
         # Passwort ein Sperr-Risiko.
         stale = account.enabled and _is_stale(out_file)
 
-        ics_bytes: Optional[bytes] = None
+        ics_bytes: bytes | None = None
         if stale:
             async with locks[account.key]:
                 # Zweite Pruefung: waehrend des Wartens kann ein anderer

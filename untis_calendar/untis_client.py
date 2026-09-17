@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .config import AccountConfig, AppConfig
 from .models import LessonEvent
-from .utils import stable_uid, tz_aware
-from .untis_direct import direct_untis_login, UntisError
 from .school_lookup import resolve_server
+from .untis_direct import UntisError, direct_untis_login
 from .untis_rest import fetch_lesson_extras
+from .utils import stable_uid, tz_aware
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class UntisClient:
     def __init__(self, app: AppConfig):
         self.app = app
 
-    def fetch_events(self, account: AccountConfig, now: Optional[datetime] = None) -> List[LessonEvent]:
+    def fetch_events(self, account: AccountConfig, now: datetime | None = None) -> list[LessonEvent]:
         """Holt den Stundenplan für einen Account.
 
         Wirft bei Fehlern eine Exception. Bewusst KEIN leeres Ergebnis bei
@@ -81,7 +81,7 @@ class UntisClient:
         logger.info("Ergebnis: %d Termine für %s", len(events), account.key)
         return events
 
-    def _element_kwargs(self, account: AccountConfig) -> Optional[Dict[str, Any]]:
+    def _element_kwargs(self, account: AccountConfig) -> dict[str, Any] | None:
         """Element für getTimetable. None -> eingeloggter Benutzer wird verwendet."""
         el = account.element
         if not el or not el.type:
@@ -98,8 +98,8 @@ class UntisClient:
             return None
         return {"id": el.id, "type": type_id}
 
-    def _map_raw_to_event(self, r: Dict[str, Any], account: AccountConfig,
-                          extras: Optional[Dict[str, Any]] = None) -> LessonEvent:
+    def _map_raw_to_event(self, r: dict[str, Any], account: AccountConfig,
+                          extras: dict[str, Any] | None = None) -> LessonEvent:
         tz = self.app.timezone
         school = account.school
         acct = account.key
@@ -140,7 +140,7 @@ class UntisClient:
         online = False
         meeting_url = None
         moved_from = moved_to = None
-        substitutions: List[tuple] = []
+        substitutions: list[tuple] = []
         extra = (extras or {}).get(source_id)
         if extra is not None:
             online = extra.online
@@ -190,7 +190,7 @@ class UntisClient:
         )
 
     @staticmethod
-    def _slot_to_dt(slot: Optional[tuple], tz: str) -> Optional[datetime]:
+    def _slot_to_dt(slot: tuple | None, tz: str) -> datetime | None:
         """(20260922, 1700) -> datetime 2026-09-22 17:00 in der Zielzone."""
         if not slot:
             return None
@@ -208,7 +208,7 @@ class UntisClient:
             return None
 
     @staticmethod
-    def _link_moved_lessons(events: List[LessonEvent]) -> None:
+    def _link_moved_lessons(events: list[LessonEvent]) -> None:
         """Entfallene Quell-Stunde mit ihrem neuen Termin verknuepfen.
 
         Die REST-Ansicht liefert entfallene Stunden nicht mit, kennt aber bei
@@ -216,7 +216,7 @@ class UntisClient:
         Gegenrichtung ergaenzen, damit am entfallenen Termin steht, wohin die
         Stunde verschoben wurde.
         """
-        by_slot: Dict[tuple, LessonEvent] = {
+        by_slot: dict[tuple, LessonEvent] = {
             (e.start.date(), e.start.hour, e.start.minute): e
             for e in events if e.status == "cancelled"
         }
@@ -228,7 +228,7 @@ class UntisClient:
             if src is not None and src.moved_to is None:
                 src.moved_to = ev.start
 
-    def _parse_times(self, d: Dict[str, Any], tz: str) -> tuple[datetime, datetime]:
+    def _parse_times(self, d: dict[str, Any], tz: str) -> tuple[datetime, datetime]:
         if d.get("start") and d.get("end"):
             s = datetime.fromisoformat(str(d["start"]))
             e = datetime.fromisoformat(str(d["end"]))
@@ -253,12 +253,12 @@ class UntisClient:
         return tz_aware(s, tz), tz_aware(e, tz)
 
     @staticmethod
-    def _first_name(val: Any, long: bool = False) -> Optional[str]:
+    def _first_name(val: Any, long: bool = False) -> str | None:
         names = UntisClient._all_names(val, long=long)
         return names[0] if names else None
 
     @staticmethod
-    def _all_names(val: Any, long: bool = False) -> List[str]:
+    def _all_names(val: Any, long: bool = False) -> list[str]:
         if val is None:
             return []
         if isinstance(val, str):
@@ -267,7 +267,7 @@ class UntisClient:
             val = [val]
         if not isinstance(val, list):
             return [str(val)]
-        out: List[str] = []
+        out: list[str] = []
         for item in val:
             if isinstance(item, dict):
                 if long:
@@ -283,13 +283,13 @@ class UntisClient:
         return out
 
     @staticmethod
-    def _merge_consecutive(events: List[LessonEvent]) -> List[LessonEvent]:
+    def _merge_consecutive(events: list[LessonEvent]) -> list[LessonEvent]:
         """Fasst direkt aufeinanderfolgende, identische Stunden zu einem Block zusammen.
 
         Aus 2x45 Min Deutsch (7:30-8:15, 8:15-9:00) wird ein Termin 7:30-9:00.
         Kurze Pausen (bis 30 Min) zwischen gleichen Stunden werden überbrückt.
         """
-        merged: List[LessonEvent] = []
+        merged: list[LessonEvent] = []
         for ev in events:
             prev = merged[-1] if merged else None
             if (
@@ -319,6 +319,4 @@ class UntisClient:
         exc = account.filters.exclude_subjects
         if inc and ev.subject not in inc:
             return False
-        if exc and ev.subject in exc:
-            return False
-        return True
+        return not (exc and ev.subject in exc)

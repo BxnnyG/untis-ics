@@ -21,7 +21,8 @@ accounts:
 
 @pytest.fixture
 def cfg_path(tmp_path):
-    out = tmp_path / "out"; out.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
     p = tmp_path / "config.yaml"
     p.write_text(textwrap.dedent(CONFIG).format(out=out))
     return p

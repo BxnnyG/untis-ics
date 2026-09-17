@@ -1,6 +1,7 @@
-from datetime import datetime, timedelta
-from untis_calendar.models import LessonEvent
+from datetime import datetime
+
 from untis_calendar.ics import events_to_ics
+from untis_calendar.models import LessonEvent
 
 
 def test_ics_builds_bytes():

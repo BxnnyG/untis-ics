@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
 
 
 @dataclass
@@ -11,30 +10,30 @@ class LessonEvent:
     start: datetime
     end: datetime
     subject: str                 # Kuerzel, z. B. "EVP"
-    room: Optional[str]          # Raumnummer, z. B. "R102"
-    teachers: List[str]          # Kuerzel, z. B. ["KL"]
-    groups: List[str]
+    room: str | None          # Raumnummer, z. B. "R102"
+    teachers: list[str]          # Kuerzel, z. B. ["KL"]
+    groups: list[str]
     status: str                  # scheduled|cancelled|substitution|moved
-    notes: Optional[str]
-    color_key: Optional[str]
+    notes: str | None
+    color_key: str | None
     source_id: str
     source_school: str
     account_key: str
 
     # Klarnamen aus Untis ("longname"). Untis liefert die praktisch immer mit,
     # nur abgefragt hat sie vorher niemand.
-    subject_long: Optional[str] = None    # "Netzwerktechnik"
-    teachers_long: List[str] = field(default_factory=list)  # ["Beispiel"]
-    room_long: Optional[str] = None       # "PC-Raum"
+    subject_long: str | None = None    # "Netzwerktechnik"
+    teachers_long: list[str] = field(default_factory=list)  # ["Beispiel"]
+    room_long: str | None = None       # "PC-Raum"
 
     # Online-Unterricht (nur ueber die REST-Ansicht verfuegbar)
     online: bool = False
-    meeting_url: Optional[str] = None
+    meeting_url: str | None = None
 
     # Verlegung und Vertretung (ebenfalls nur ueber die REST-Ansicht)
-    moved_from: Optional[datetime] = None   # diese Stunde kommt von dort
-    moved_to: Optional[datetime] = None     # diese Stunde findet dort statt
-    substitutions: List[tuple] = field(default_factory=list)
+    moved_from: datetime | None = None   # diese Stunde kommt von dort
+    moved_to: datetime | None = None     # diese Stunde findet dort statt
+    substitutions: list[tuple] = field(default_factory=list)
 
     def subject_display(self, style: str = "long") -> str:
         """Fach fuer die Terminueberschrift."""
@@ -44,7 +43,7 @@ class LessonEvent:
             return f"{self.subject} - {self.subject_long}"
         return self.subject_long
 
-    def teacher_display(self) -> List[str]:
+    def teacher_display(self) -> list[str]:
         """Lehrer mit Klarnamen, Kuerzel nur als Rueckfall."""
         if self.teachers_long:
             return self.teachers_long

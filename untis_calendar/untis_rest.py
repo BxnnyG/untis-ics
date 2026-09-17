@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
 from datetime import date, timedelta
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 import requests
 
@@ -32,20 +33,27 @@ ELEMENT_LABELS = {1: "Klasse", 2: "Lehrer", 3: "Fach", 4: "Raum"}
 
 
 class LessonExtras:
-    __slots__ = ("online", "meeting_url", "texts", "cell_state",
-                 "moved_from", "moved_to", "substitutions")
+    __slots__ = (
+        "cell_state",
+        "meeting_url",
+        "moved_from",
+        "moved_to",
+        "online",
+        "substitutions",
+        "texts",
+    )
 
     def __init__(self) -> None:
         self.online: bool = False
-        self.meeting_url: Optional[str] = None
-        self.texts: List[str] = []
+        self.meeting_url: str | None = None
+        self.texts: list[str] = []
         # Zustand der Stunde laut REST-Ansicht: STANDARD, SHIFT, CANCEL, ...
-        self.cell_state: Optional[str] = None
+        self.cell_state: str | None = None
         # Verlegung: (datum, HHMM) - woher die Stunde kommt bzw. wohin sie geht
-        self.moved_from: Optional[tuple] = None
-        self.moved_to: Optional[tuple] = None
+        self.moved_from: tuple | None = None
+        self.moved_to: tuple | None = None
         # Vertretungen als (Art, vorher, nachher), z. B. ("Lehrer", "VS", "MY")
-        self.substitutions: List[tuple] = []
+        self.substitutions: list[tuple] = []
 
     def __repr__(self) -> str:  # pragma: no cover - nur Debug
         return (f"LessonExtras(online={self.online}, url={self.meeting_url!r}, "
@@ -53,7 +61,7 @@ class LessonExtras:
                 f"subst={self.substitutions})")
 
 
-def _clean_url(raw: Any) -> Optional[str]:
+def _clean_url(raw: Any) -> str | None:
     """Gibt nur echte http(s)-Links zurueck, keine Platzhalter wie '0'."""
     if not raw:
         return None
@@ -65,7 +73,7 @@ def _clean_url(raw: Any) -> Optional[str]:
     return s
 
 
-def _find_url_in_text(*texts: Any) -> Optional[str]:
+def _find_url_in_text(*texts: Any) -> str | None:
     """Viele Lehrkraefte kleben den Meeting-Link einfach in den Stundentext."""
     for t in texts:
         if not t:
@@ -87,7 +95,7 @@ class UntisRestSession:
         self.timeout = timeout
         self.session = requests.Session()
 
-    def login(self) -> "UntisRestSession":
+    def login(self) -> UntisRestSession:
         resp = self.session.post(
             f"{self.server}/WebUntis/j_spring_security_check",
             data={
@@ -113,7 +121,7 @@ class UntisRestSession:
             logger.debug("REST-Logout ignoriert: %s", e)
 
     def _week_data(self, element_id: int, element_type: int,
-                   day: date) -> tuple[List[Dict[str, Any]], Dict[tuple, str]]:
+                   day: date) -> tuple[list[dict[str, Any]], dict[tuple, str]]:
         resp = self.session.get(
             f"{self.server}/WebUntis/api/public/timetable/weekly/data",
             params={
@@ -137,16 +145,16 @@ class UntisRestSession:
             periods = []
 
         # Register (typ, id) -> Name, um orgId aufloesen zu koennen
-        names: Dict[tuple, str] = {}
+        names: dict[tuple, str] = {}
         for el in res.get("elements") or []:
             key = (el.get("type"), el.get("id"))
             names[key] = el.get("name") or el.get("longName") or ""
         return periods, names
 
     def fetch_extras(self, element_id: int, element_type: int,
-                     start: date, end: date) -> Dict[str, LessonExtras]:
+                     start: date, end: date) -> dict[str, LessonExtras]:
         """Extras je Perioden-ID fuer den Zeitraum."""
-        out: Dict[str, LessonExtras] = {}
+        out: dict[str, LessonExtras] = {}
         for monday in _mondays(start, end):
             try:
                 periods, names = self._week_data(element_id, element_type, monday)
@@ -216,7 +224,7 @@ def _mondays(start: date, end: date) -> Iterator[date]:
 def fetch_lesson_extras(server: str, school: str, username: str, password: str,
                         element_id: int, element_type: int,
                         start: date, end: date,
-                        verify_ssl: bool = True) -> Dict[str, LessonExtras]:
+                        verify_ssl: bool = True) -> dict[str, LessonExtras]:
     """Bequemer Einstieg. Wirft nicht - im Fehlerfall kommt eine leere Map."""
     sess = UntisRestSession(server, school, username, password, verify_ssl)
     try:

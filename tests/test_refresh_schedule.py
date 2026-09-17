@@ -1,6 +1,9 @@
 """Adaptives Refresh-Intervall: tagsüber häufig, nachts selten."""
 from datetime import datetime
 
+import pytest
+from pydantic import ValidationError
+
 from untis_calendar.config import AppConfig
 from untis_calendar.server import compute_interval_minutes
 
@@ -46,6 +49,5 @@ def test_idle_zero_disables_adaptive_behaviour():
 
 
 def test_invalid_hour_rejected():
-    import pytest
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         cfg(active_hours_start=24)

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
-from typing import Any, Dict, Iterator, Optional
+from typing import Any
 
 import requests
 
@@ -41,10 +42,10 @@ class DirectUntisSession:
         self.verify_ssl = verify_ssl
         self.auto_resolve = auto_resolve
         self.session = requests.Session()
-        self.session_id: Optional[str] = None
-        self.person_type: Optional[int] = None
-        self.person_id: Optional[int] = None
-        self.klasse_id: Optional[int] = None
+        self.session_id: str | None = None
+        self.person_type: int | None = None
+        self.person_id: int | None = None
+        self.klasse_id: int | None = None
         self.request_id = 0
         self.server = self._normalize(server)
 
@@ -103,7 +104,7 @@ class DirectUntisSession:
 
         return data.get("result")
 
-    def login(self) -> "DirectUntisSession":
+    def login(self) -> DirectUntisSession:
         try:
             result = self._rpc_request("authenticate", {
                 "user": self.username,
@@ -149,9 +150,9 @@ class DirectUntisSession:
             finally:
                 self.session_id = None
 
-    def timetable(self, start: date, end: date, element: Optional[Dict[str, Any]] = None) -> list:
+    def timetable(self, start: date, end: date, element: dict[str, Any] | None = None) -> list:
         """Stundenplan abrufen."""
-        options: Dict[str, Any] = {
+        options: dict[str, Any] = {
             "startDate": start.strftime("%Y%m%d"),
             "endDate": end.strftime("%Y%m%d"),
             "showInfo": True,

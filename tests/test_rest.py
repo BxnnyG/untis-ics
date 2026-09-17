@@ -1,7 +1,7 @@
 """Anreicherung über die REST-Ansicht (Online-Unterricht, Stundentexte)."""
-from untis_calendar.untis_rest import _clean_url, _find_url_in_text, _mondays
-
 from datetime import date
+
+from untis_calendar.untis_rest import _clean_url, _find_url_in_text, _mondays
 
 
 def test_placeholder_urls_are_rejected():

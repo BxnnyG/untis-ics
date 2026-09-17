@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 SCHOOLSEARCH_URL = "https://schoolsearch.webuntis.com/schoolquery2"
 
 # Ergebnisse sind sehr langlebig -> im Prozess cachen (Server-Betrieb)
-_CACHE: Dict[str, tuple[float, Optional[str]]] = {}
+_CACHE: dict[str, tuple[float, str | None]] = {}
 _CACHE_TTL = 24 * 3600
 
 
-def search_schools(query: str, timeout: int = 20) -> List[Dict[str, Any]]:
+def search_schools(query: str, timeout: int = 20) -> list[dict[str, Any]]:
     """Rohe Schulsuche. Gibt die Liste der Treffer zurück (evtl. leer)."""
     payload = {
         "id": "school-lookup",
@@ -40,7 +40,7 @@ def search_schools(query: str, timeout: int = 20) -> List[Dict[str, Any]]:
     return data.get("result", {}).get("schools", []) or []
 
 
-def resolve_server(school: str, timeout: int = 20) -> Optional[str]:
+def resolve_server(school: str, timeout: int = 20) -> str | None:
     """Ermittelt den aktuellen Server-Host für einen Schul-Loginnamen.
 
     Gibt None zurück, wenn die Schule nicht eindeutig gefunden wurde.
@@ -51,7 +51,7 @@ def resolve_server(school: str, timeout: int = 20) -> Optional[str]:
     if cached and now - cached[0] < _CACHE_TTL:
         return cached[1]
 
-    server: Optional[str] = None
+    server: str | None = None
     try:
         schools = search_schools(school, timeout=timeout)
         # Exakter Treffer auf loginName hat Vorrang

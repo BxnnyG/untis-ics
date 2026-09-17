@@ -1,17 +1,17 @@
 """Tests gegen das reale WebUntis-JSON-RPC-Format (getTimetable)."""
-from datetime import datetime
 
 import pytest
+from pydantic import ValidationError
 
 from untis_calendar.config import AccountConfig, AppConfig, CalendarConfig, Config
 from untis_calendar.untis_client import UntisClient
 
 
 def make_account(**over):
-    data = dict(
-        key="acc", school="musterschule", username="u", password="p",
-        calendar=CalendarConfig(file_name="a.ics"),
-    )
+    data = {
+        "key": "acc", "school": "musterschule", "username": "u", "password": "p",
+        "calendar": CalendarConfig(file_name="a.ics"),
+    }
     data.update(over)
     return AccountConfig(**data)
 
@@ -125,7 +125,7 @@ def test_filters(client):
 
 
 def test_duplicate_calendar_files_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Config.model_validate({
             "app": {}, "accounts": [
                 {"key": "a", "school": "s", "username": "u", "password": "p",
@@ -137,7 +137,7 @@ def test_duplicate_calendar_files_rejected():
 
 
 def test_duplicate_account_keys_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Config.model_validate({
             "app": {}, "accounts": [
                 {"key": "a", "school": "s", "username": "u", "password": "p",
@@ -179,7 +179,7 @@ def test_teacher_display_prefers_full_name(client):
 
 def test_invalid_subject_style_rejected():
     from untis_calendar.config import AppConfig
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         AppConfig(subject_style="bunt")
 
 
@@ -205,7 +205,8 @@ def test_event_without_extras_is_offline(client):
 
 def test_merge_does_not_mix_online_and_presence(client):
     from untis_calendar.untis_rest import LessonExtras
-    ex = LessonExtras(); ex.online = True
+    ex = LessonExtras()
+    ex.online = True
     a = make_account()
     evs = [
         client._map_raw_to_event(raw(id=1, startTime=730, endTime=815), a, {}),
