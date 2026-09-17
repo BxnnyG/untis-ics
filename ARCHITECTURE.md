@@ -1,534 +1,158 @@
-# Architektur & Troubleshooting Guide
+# Architecture
 
-Technische Dokumentation für Entwickler und KI-Assistenten.
+How the pieces fit together and why they are shaped that way.
 
-## Projektarchitektur
-
-### Übersicht
+## Data flow
 
 ```
-untis_calendar/
-├── __init__.py
-├── config.py          # Pydantic-Config (YAML + ENV) + Validierung
-├── school_lookup.py   # Schulname -> aktueller WebUntis-Server (Schulsuche)
-├── untis_direct.py    # JSON-RPC Client (authenticate, getTimetable)
-├── untis_client.py    # Hauptlogik: Daten abrufen, mappen, mergen, filtern
-├── models.py          # LessonEvent Datenmodell
-├── utils.py           # Helfer (UID-Generierung, Timezone)
-├── ics.py             # ICS-Generierung (icalendar)
-├── server.py          # FastAPI-Webserver + Hintergrund-Refresh
-├── logging_config.py  # Logging-Setup
-
-cli.py                 # CLI Entry Point (generate, check, serve)
-config.yaml            # Haupt-Konfiguration
-requirements.txt       # Python-Dependencies
+config.yaml + environment
+  └─> Config.load()                       config.py
+      └─> UntisClient.fetch_events()      untis_client.py
+          ├─> resolve_server()            school_lookup.py   (if no server configured)
+          ├─> direct_untis_login()        untis_direct.py    JSON-RPC: authenticate
+          │     ├─> getTimetable                             the actual lessons
+          │     └─> getTimegridUnits                         period numbers
+          ├─> fetch_lesson_extras()       untis_rest.py      REST: online, reschedules, colours
+          ├─> _map_raw_to_event()                            raw JSON -> LessonEvent
+          ├─> _link_moved_lessons()                          connect both ends of a reschedule
+          ├─> _filter_event()                                include/exclude subjects
+          └─> _merge_consecutive()                           double periods into one event
+      └─> events_to_ics()                 ics.py
+          └─> file in output_dir
+              └─> served by server.py, or written by the CLI
 ```
 
-### Datenfluss
+## Two APIs, on purpose
 
-```
-CLI/Cron
-  └─> Config laden (config.py)
-      └─> UntisClient.fetch_events()
-          └─> resolve_server() [school_lookup.py]  (falls server: leer)
-          └─> direct_untis_login() [untis_direct.py]
-              └─> JSON-RPC authenticate + getTimetable
-          └─> _map_raw_to_event() [untis_client.py]
-              └─> WebUntis-JSON → LessonEvent
-          └─> _filter_event()
-              └─> include/exclude Subjects
-          └─> _merge_consecutive()
-              └─> Doppelstunden zu einem Termin zusammenfassen
-      └─> events_to_ics() [ics.py]
-          └─> LessonEvent[] → ICS bytes
-      └─> Datei schreiben (output_dir)
-```
+WebUntis exposes an old JSON-RPC interface and a newer REST view. This
+project uses both, for different things.
 
-### Wichtige Designentscheidungen
+**JSON-RPC (`untis_direct.py`) is the source of truth.** It returns the
+lessons, including cancelled ones, and is stable across the instances tested.
 
-#### 1. Direkte JSON-RPC statt webuntis-Bibliothek
+**REST (`untis_rest.py`) only enriches.** It knows things JSON-RPC does not:
+whether a lesson is online, whether it was moved and from where, what was
+substituted, and the colour a school assigned to a subject. Its results are
+matched onto the JSON-RPC lessons by period id.
 
-**Grund**: Die `python-webuntis`-Bibliothek hat einen Bug bei Request-ID-Validierung, der bei manchen Servern zu "Request ID mismatch"-Fehlern führt.
+The split matters because the REST view **omits cancelled lessons entirely**.
+Relying on it alone would silently drop exactly the events users care most
+about. Enrichment is therefore optional and failure-tolerant: if the REST
+call fails, the sync continues without those extras rather than aborting.
 
-**Lösung**: Eigene Implementation in `untis_direct.py`:
-- Direkter `requests`-Aufruf
-- Manuelles Session-Management
-- Robustes Error-Handling
+### Why not the `webuntis` library
 
-**Code-Referenz**: `untis_direct.DirectUntisSession`
+The library adds a dependency and an abstraction layer without solving the
+problems this project actually has — server migration, cancelled lessons,
+online lessons, reschedules. Two direct HTTP clients are less code than
+working around it.
 
-#### 2. Ein-Datei-Konfiguration
+## Design decisions
 
-**Grund**: Einfachheit für Endnutzer ("DAU-friendly").
+### Servers are resolved at runtime
 
-**Design**:
-- Passwörter/Tokens direkt in YAML (für Einfachheit)
-- Optional: ENV-Fallback (`password_env`, `token_env`)
-- Pydantic-Validierung
+A school moving between WebUntis servers makes `/WebUntis/jsonrpc.do` return
+`404` on the old host. That looks like a discontinued API but is not.
+`school_lookup.py` asks the official school search which host is responsible
+and caches the answer for a day. `DirectUntisSession.login()` retries once
+against a freshly resolved host when it sees a `404`.
 
-**Migration**: Falls du zurück zu ENV-only willst, ändere in `config.py`:
-```python
-class AccountConfig(BaseModel):
-    password_env: str  # Required statt Optional
-```
+Configuring `server:` explicitly still works and skips a lookup; the retry
+covers the case where that configured value goes stale.
 
-#### 3. Stabile Event-UIDs
+### Failures must not destroy data
 
-**Grund**: Google Calendar & Co. erkennen Updates über UIDs.
+The original failure mode: `fetch_events()` caught every exception, returned
+an empty list, and the caller wrote that out as a valid but empty calendar,
+replacing good data.
 
-**Strategie**:
-```python
-uid = sha256(school | account | source_id | start | end | room)
-```
+Now errors propagate and every writer decides deliberately:
 
-**Wichtig**: 
-- UID darf sich nicht ändern, wenn Event gleich bleibt
-- Bei Updates: gleiche UID + erhöhte SEQUENCE oder neuere DTSTAMP
+- The CLI keeps the existing file and exits non-zero.
+- The server keeps the existing file and serves the last good state.
+- A suspiciously empty result — no events where a populated file already
+  exists — is also treated as a failure rather than written out.
 
-**Code**: `utils.stable_uid()`
+### Stable UIDs
 
-#### 4. Subject-Parsing (Bugfix)
+Event UIDs hash the WebUntis period id, not the time or room. A lesson that
+moves keeps its UID, so calendar clients update the existing entry instead of
+leaving a stale duplicate. This is also what makes reschedule linking and any
+future diffing possible.
 
-**Problem**: WebUntis liefert `subject` in verschiedenen Formaten:
-- String: `"MATHE"`
-- Dict: `{"name": "MATHE", "longName": "Mathematik"}`
-- Liste: `[{"name": "MATHE"}]`
+### Disabled accounts never authenticate
 
-**Lösung** in `untis_client._map_raw_to_event()`:
-```python
-if isinstance(subject, list) and subject:
-    subject = subject[0].get("name", ...)
-elif isinstance(subject, dict):
-    subject = subject.get("name", ...)
-subject = str(subject) if subject else "Unbekannt"
-```
+`enabled: false` removes an account from background refresh *and* from live
+fetches triggered by feed requests. Repeated failed logins lock WebUntis
+accounts, so an account with an expired password must not keep trying — not
+even because someone (or Google) polls its feed.
 
-#### 5. SSL-Verifikation Optional
+### Retries are narrow on purpose
 
-**Grund**: Manche Schulen nutzen selbst-signierte Zertifikate.
+`retry.py` retries connection errors, timeouts, `429` and `5xx`. It
+deliberately does **not** retry `4xx`: retrying a rejected login is how you
+get an account locked. `is_transient()` encodes that, and a test pins it.
 
-**Config**:
-```yaml
-accounts:
-  - verify_ssl: false
-```
+### Presentation choices in `ics.py`
 
-**Implementation**: `urllib3.disable_warnings()` in `untis_direct.__init__`
+- **Cancelled lessons keep `STATUS:CONFIRMED` by default.** Google hides
+  `STATUS:CANCELLED` in subscribed calendars, so setting it correctly makes
+  the lesson vanish. `TRANSP:TRANSPARENT` frees the time instead, and the
+  title carries the marker.
+- **State comes first in the title.** Google truncates titles in grid views;
+  `❌ Verlegt …` has to survive truncation.
+- **`LOCATION` stays the room number**, not the room's descriptive name —
+  that is what you need to find it. Cancelled lessons get no location at all.
+- **Colours** are emitted as a CSS name (RFC 7986 allows nothing else) plus
+  `X-APPLE-CALENDAR-COLOR` for the exact value.
 
----
+## Refresh model
 
-## Häufige Probleme & Fixes
+In server mode, a background task owns freshness. Feed requests are answered
+from disk and never trigger a WebUntis call, so client polling — including
+Google's — creates no load and always gets a fast response. A live fetch only
+happens when no file exists or the background task has clearly stalled
+(file older than three intervals). An `asyncio.Lock` per account collapses
+concurrent requests.
 
-### 1. "invalid schoolname" (Code -8500)
+The interval depends on the time of day: a timetable does not change at 3am,
+so polling at the daytime rate all night is pure load on the school's server.
 
-**Symptom**:
-```
-RuntimeError: WebUntis API Error: {'message': 'invalid schoolname', 'code': -8500}
-```
+## Configuration
 
-**Ursache**:
-- Schulname ist case-sensitive
-- Schulname muss exakt aus WebUntis-URL übernommen werden
-
-**Fix**:
-1. Browser: `https://SERVER/WebUntis/?school=SCHULNAME`
-2. `SCHULNAME` exakt in `config.yaml` kopieren
+One YAML file, with two escape hatches:
 
-**Debug**:
-```python
-# In untis_direct.py, Zeile ~40:
-logger.debug("Request URL: %s", self.url)
-```
-
-### 2. "unhashable type: 'list'" beim Subject
-
-**Symptom**:
-```
-TypeError: unhashable type: 'list'
-  File "untis_client.py", line 114, in _map_raw_to_event
-    color_key = account.color_map.get(subject)
-```
-
-**Ursache**: `subject` ist Liste, aber `dict.get()` erwartet hashable (String).
-
-**Fix**: Bereits gefixt in aktuellem Code (siehe Architektur #4).
-
-**Workaround** (falls alter Code):
-```python
-subject = str(subject) if not isinstance(subject, (list, dict)) else "Unbekannt"
-color_key = account.color_map.get(subject, None)
-```
-
-### 3. SSL Certificate Verify Failed
-
-**Symptom**:
-```
-SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain'))
-```
-
-**Fix**: In `config.yaml`:
-```yaml
-accounts:
-  - verify_ssl: false
-```
-
-**Unterdrückung der Warnung**: `untis_direct.py` macht automatisch `urllib3.disable_warnings()`.
-
-### 4. Request-ID Mismatch (webuntis-Bibliothek)
-
-**Symptom** (alter Code):
-```
-Request ID was not the same one as returned. error
-```
-
-**Ursache**: Bug in `python-webuntis` bei manchen Servern.
-
-**Fix**: `untis_direct.py` ist der einzige Client; der alte `auth.py`-Wrapper wurde entfernt.
-
-### 5. Leere ICS (99 Bytes)
-
-**Symptom**: ICS-Datei enthält nur Header, keine Events.
-
-**Checks**:
-```bash
-# Log anschauen
-grep "Empfangen:" /var/log/untis-calendar.log
-# Sollte zeigen: "Empfangen: N Roheinträge"
-
-# Manuell testen
-python cli.py generate --config config.yaml
-cat out/*.ics | grep "BEGIN:VEVENT" | wc -l
-```
-
-**Ursachen**:
-- Login fehlgeschlagen (Credentials falsch)
-- Falscher Schulname/Server
-- Zeitfenster außerhalb der Unterrichtszeiten
-- Filter zu restriktiv (`include_subjects`)
-
-**Debug**: Logging auf DEBUG setzen:
-```python
-# In logging_config.py
-logger.setLevel(logging.DEBUG)
-```
-
-### 6. Keine Permissions (Debian)
-
-**Symptom**:
-```
-PermissionError: [Errno 13] Permission denied: '/var/www/untis-calendar/kalender.ics'
-```
-
-**Fix**:
-```bash
-sudo chown -R www-data:www-data /var/www/untis-calendar
-sudo chmod 755 /var/www/untis-calendar
-```
-
-Oder Config anpassen:
-```yaml
-app:
-  output_dir: "/home/user/untis-out"  # Statt /var/www
-```
-
----
-
-## Debugging-Tools
-
-### 1. Debug-Logging aktivieren
-
-In `cli.py` ändern:
-```python
-from untis_calendar.logging_config import setup_logging
-
-setup_logging(level=logging.DEBUG)
-```
-
-### 2. Rohdaten inspizieren
-
-In `untis_client.py`, Zeile ~38:
-```python
-logger.info("Empfangen: %d Roheinträge für %s", len(raw_list), account.key)
-# Hinzufügen:
-logger.debug("Rohdaten: %s", raw_list[:2])  # Erste 2 Events
-```
-
-### 3. Einzelnes Event testen
-
-```python
-from untis_calendar.untis_direct import direct_untis_login
-
-with direct_untis_login("alt-server.webuntis.com", "musterschule", "user", "pass", False) as sess:
-    events = sess.timetable(start=date(2025, 10, 22), end=date(2025, 10, 23))
-    print(events)
-```
-
-### 4. ICS-Validierung
-
-```bash
-# icalendar-Validator (Python)
-pip install icalendar
-python -c "from icalendar import Calendar; c = Calendar.from_ical(open('out/kalender.ics', 'rb').read()); print(c.walk())"
-
-# Online: https://icalendar.org/validator.html
-```
-
----
-
-## Erweiterungen
-
-### 1. Mehrere Kalender pro Account
-
-**Use Case**: Schüler will Fächer in separate Kalender trennen.
-
-**Implementation**:
-```yaml
-accounts:
-  - key: "schueler1_mathe"
-    filters:
-      include_subjects: ["MATHE"]
-    calendar:
-      file_name: "mathe.ics"
-  
-  - key: "schueler1_deutsch"
-    filters:
-      include_subjects: ["DEUTSCH"]
-    calendar:
-      file_name: "deutsch.ics"
-```
-
-### 2. Integrierter Scheduler (statt Cron)
-
-**Use Case**: Windows oder Systeme ohne Cron.
-
-**Implementation** (bereits vorbereitet):
-```python
-# In cli.py
-from apscheduler.schedulers.blocking import BlockingScheduler
-
-
-def cmd_schedule(args):
-    cfg = Config.load(args.config)
-    client = UntisClient(cfg.app)
-
-    def sync():
-        for acc in cfg.accounts:
-            events = client.fetch_events(acc)
-            ics_bytes = events_to_ics(events)
-            # ...
-
-    scheduler = BlockingScheduler()
-    scheduler.add_job(sync, "interval", minutes=15)
-    scheduler.start()
-```
-
-### 3. Farben in ICS (begrenzt)
-
-**Problem**: ICS-Standard kennt keine echten Event-Farben.
-
-**Workaround**: CATEGORIES nutzen (bereits implementiert):
-```python
-# In ics.py
-ve.add("categories", [e.subject, e.color_key])
-```
-
-Google Calendar ignoriert das meist, aber Apple Calendar kann es nutzen.
-
-**Bessere Lösung**: Separate Kalender pro Fach/Farbe (siehe #1).
-
-### 4. Web-UI für Konfiguration
-
-**Idee**: FastAPI-Frontend zum Bearbeiten von `config.yaml`.
-
-**Sketch**:
-```python
-@app.get("/admin")
-def admin_ui():
-    return HTMLResponse("""<form>...</form>""")
-
-
-@app.post("/admin/save")
-def save_config(data: dict):
-    # Validieren, YAML schreiben
-    cfg = Config.model_validate(data)
-    Path("config.yaml").write_text(yaml.dump(cfg.model_dump()))
-```
-
-**Sicherheit**: Basic Auth oder Token!
-
-### 5. Direkter Google Calendar Push (statt ICS)
-
-**Idee**: Über Google Calendar API direkt Events eintragen.
-
-**Pro**: Echtzeit-Updates, keine Polling-Delays.
-
-**Contra**: OAuth kompliziert, Rate-Limits, Token-Refresh.
-
-**Bibliothek**: `google-api-python-client`
-
----
+- `password_env` / `token_env` / `status_token_env` / `heartbeat_url_env`
+  read secrets from the environment, so the config file itself stays free of
+  credentials and safe to commit as an example.
+- Any `app.*` or `server.*` key can be overridden by `UNTIS_APP_*` /
+  `UNTIS_SERVER_*`, which is how the container is configured. Applied
+  overrides are logged, because silently altered configuration is miserable
+  to debug.
+
+Accounts are intentionally *not* configurable from the environment. Expressing
+a list of nested objects in environment variables produces a worse interface
+than a mounted file.
 
 ## Testing
 
-### Unit Tests
+Tests run against captured real WebUntis payloads rather than invented ones,
+because the shape of that data is the thing most likely to surprise. Several
+tests pin behaviour that is easy to regress and expensive to get wrong:
 
-```bash
-# Pytest installieren
-pip install pytest
+- `4xx` is never retried (account lockout).
+- Disabled accounts never trigger a login.
+- Wrong token and unknown account return identical responses.
+- Cancelled lessons stay visible by default.
+- `HHMM` times parse as clock times, not minute offsets.
 
-# Tests ausführen
-pytest tests/
-```
+## Known limits
 
-**Beispiel** (`tests/test_ics.py`):
-```python
-from untis_calendar.models import LessonEvent
-from untis_calendar.ics import events_to_ics
-
-
-def test_ics_contains_event():
-    ev = LessonEvent(...)
-    ics = events_to_ics([ev])
-    assert b"BEGIN:VEVENT" in ics
-    assert b"SUMMARY:MATHE" in ics
-```
-
-### Integration Test
-
-```bash
-# Vollständiger Durchlauf
-python cli.py generate --config config.yaml
-
-# Prüfen
-test -s out/kalender.ics && echo "OK" || echo "FAIL"
-grep -c "BEGIN:VEVENT" out/kalender.ics
-```
-
----
-
-## Performance
-
-### Bottlenecks
-
-1. **WebUntis-API**: ~500ms pro Request
-2. **ICS-Generierung**: ~5ms für 100 Events (vernachlässigbar)
-3. **Datei-IO**: ~1ms (vernachlässigbar)
-
-**Empfehlung**: Cache mit TTL (bereits implementiert).
-
-### Caching-Strategie
-
-**Aktuell** (Datei-basiert):
-```python
-if file_age < cache_ttl:
-    return cached_file
-else:
-    refresh_from_untis()
-```
-
-**Alternative** (Redis/Memcached):
-```python
-import redis
-
-r = redis.Redis()
-cached = r.get(f"events:{account.key}")
-if cached and r.ttl(f"events:{account.key}") > 0:
-    return pickle.loads(cached)
-```
-
-### Concurrency
-
-**Für mehrere Accounts parallel**:
-```python
-from concurrent.futures import ThreadPoolExecutor
-
-with ThreadPoolExecutor(max_workers=5) as exe:
-    futures = [exe.submit(client.fetch_events, acc) for acc in accounts]
-    results = [f.result() for f in futures]
-```
-
----
-
-## Security Considerations
-
-### 1. Tokens in Git
-
-**Nie committen!**
-
-`.gitignore`:
-```
-config.yaml
-.env
-out/
-*.ics
-```
-
-### 2. Token-Länge
-
-**Minimum**: 24 Zeichen, random.
-
-**Generierung**:
-```python
-import secrets
-
-token = secrets.token_urlsafe(32)
-```
-
-### 3. Feed ohne Token
-
-Falls `token` und `token_env` beide fehlen, ist Feed öffentlich:
-```python
-# In server.py
-if expected_val and token != expected_val:
-    raise HTTPException(401)
-# Sonst: durchlassen
-```
-
-**Best Practice**: Immer Token setzen!
-
-### 4. Rate Limiting
-
-**Apache** (siehe DEPLOYMENT.md):
-```apache
-<Location />
-    SetOutputFilter RATE_LIMIT
-    SetEnv rate-limit 400
-</Location>
-```
-
-**FastAPI** (mit `slowapi`):
-```python
-from slowapi import Limiter
-limiter = Limiter(key_func=lambda: request.client.host)
-
-@app.get("/calendar/{key}.ics")
-@limiter.limit("10/minute")
-def get_calendar(...):
-```
-
----
-
-## Code-Style & Konventionen
-
-- **Python**: PEP 8, Type Hints
-- **Imports**: `from __future__ import annotations`
-- **Logging**: `logger.info()` für Erfolg, `logger.error()` mit `exc_info=True`
-- **Config**: Pydantic BaseModel, snake_case
-- **Variablen**: sprechend (`start_dt` statt `s`)
-
----
-
-## Lizenz & Credits
-
-- MIT License (optional anpassen)
-- Basiert auf `python-webuntis`, `icalendar`, `fastapi`
-- WebUntis ist Trademark von Untis GmbH
-
----
-
-## Kontakt
-
-Bei technischen Fragen oder Bugs:
-- GitHub Issues (falls Repo vorhanden)
-- Logs mit DEBUG-Level bereitstellen
-- Config (anonymisiert) anhängen
+- **Exams and homework** (`getExams`, `getHomeWork`) return
+  `Method not found` on the instances tested — they are disabled server-side
+  and cannot be fetched.
+- **Class logins** (`personType 1`) receive no teacher field from WebUntis.
+  The abbreviations appear only inside the student group string.
+- **Google ignores per-event colours** and its own refresh cadence is not
+  controllable from the feed.
+- **No rate limiting.** That belongs in a reverse proxy.

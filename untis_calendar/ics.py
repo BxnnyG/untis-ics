@@ -13,12 +13,12 @@ WEEKDAYS = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
 
 
 def _when(dt: datetime) -> str:
-    """'Di 22.09. 17:00' - kurz genug fuer den Terminkopf."""
+    """'Di 22.09. 17:00' - short enough for an event title."""
     return f"{WEEKDAYS[dt.weekday()]} {dt:%d.%m.} {dt:%H:%M}"
 
 
 def _build_summary(e: LessonEvent, subject_style: str) -> str:
-    """Terminueberschrift.
+    """Build the event title.
 
     Google kuerzt den Titel in der Monats-/Wochenansicht stark ab, deshalb
     steht der Zustand vorne: das Symbol und ein kurzes Wort sind auch dann
@@ -27,8 +27,8 @@ def _build_summary(e: LessonEvent, subject_style: str) -> str:
     fach = e.subject_display(subject_style)
 
     if e.status == "cancelled":
-        # Bei einer entfallenen Stunde ist der Raum belanglos - dafuer
-        # interessiert, ob und wohin sie verlegt wurde.
+        # For a cancelled lesson the room is irrelevant; what matters is
+        # whether and where it was moved to.
         if e.moved_to:
             return f"❌ Verlegt · {fach} → {_when(e.moved_to)}"
         return f"❌ Entfällt · {fach}"
@@ -46,8 +46,8 @@ def _build_summary(e: LessonEvent, subject_style: str) -> str:
 
 
 def _build_description(e: LessonEvent) -> str:
-    """Details. Das Wichtigste zuerst - Google zeigt die erste Zeile
-    in der Terminvorschau."""
+    """Event details, most important first - Google shows the opening line in
+    the event preview."""
     head: list[str] = []
 
     if e.status == "cancelled":
@@ -75,7 +75,7 @@ def _build_description(e: LessonEvent) -> str:
     body: list[str] = []
     teachers = e.teacher_display()
     if teachers:
-        # Kuerzel in Klammern, falls es sich vom Klarnamen unterscheidet
+        # Abbreviation in brackets when it differs from the full name
         if e.teachers_long and e.teachers and e.teachers_long != e.teachers:
             paired = ", ".join(
                 f"{lang} ({kurz})" for lang, kurz in zip(e.teachers_long, e.teachers)
@@ -141,12 +141,12 @@ def events_to_ics(
     cal.add("method", "PUBLISH")
 
     if calendar_name:
-        # Sorgt dafür, dass Google/Apple den Kalender sinnvoll benennen
+        # Makes Google/Apple name the calendar sensibly
         cal.add("x-wr-calname", calendar_name)
         cal.add("name", calendar_name)
     cal.add("x-wr-timezone", timezone_name)
 
-    # Refresh-Hinweis für Clients (Google ignoriert das teilweise, schadet aber nicht)
+    # Refresh hint for clients (Google largely ignores it, but it costs nothing)
     dur = vDuration(timedelta(minutes=refresh_minutes))
     cal.add("refresh-interval", dur, parameters={"VALUE": "DURATION"})
     cal.add("x-published-ttl", dur)
@@ -161,17 +161,17 @@ def events_to_ics(
         ve.add("uid", e.uid)
         ve.add("dtstamp", now_utc)
         ve.add("last-modified", now_utc)
-        # UTC-Zeiten: von allen Clients (insb. Google) zuverlässig verstanden
+        # UTC times are understood reliably by every client, Google included
         ve.add("dtstart", e.start.astimezone(timezone.utc))
         ve.add("dtend", e.end.astimezone(timezone.utc))
 
         ve.add("summary", vText(_build_summary(e, subject_style)))
         ve.add("description", vText(_build_description(e)))
 
-        # LOCATION bleibt die Raumnummer - danach sucht man im Gebäude.
-        # Bei Online-Unterricht ohne Raum kommt der Meeting-Link dorthin,
-        # den machen Google und Apple in der Terminansicht anklickbar.
-        # Entfallene Stunden brauchen keinen Ort.
+        # LOCATION stays the room number - that is what you look for in the
+        # building. For online lessons without a room the meeting link goes
+        # there instead; Google and Apple make it clickable. Cancelled lessons
+        # need no location at all.
         if e.status != "cancelled":
             if e.room:
                 ve.add("location", vText(e.room))
@@ -182,19 +182,18 @@ def events_to_ics(
             ve.add("url", e.meeting_url)
 
         if e.status == "cancelled":
-            # Google blendet STATUS:CANCELLED in abonnierten Feeds aus - der
-            # Termin waere dann komplett weg statt sichtbar gekennzeichnet.
-            # Default "mark": sichtbar lassen, im Titel kennzeichnen und die
-            # Zeit nicht mehr als belegt melden.
+            # Google hides STATUS:CANCELLED in subscribed feeds, so setting it
+            # makes the event vanish instead of being marked. Default "mark":
+            # keep it visible, flag it in the title, and stop claiming the time.
             ve.add("status", "CANCELLED" if cancelled_style == "status" else "CONFIRMED")
             ve.add("transp", "TRANSPARENT")
         else:
             ve.add("status", "CONFIRMED")
             ve.add("transp", "OPAQUE")
 
-        # RFC 7986 erlaubt fuer COLOR nur CSS3-Farbnamen, deshalb der
-        # naechstgelegene Name; den exakten Hexwert nimmt Apple entgegen.
-        # Google ignoriert beides in abonnierten Kalendern.
+        # RFC 7986 only allows CSS3 colour names for COLOR, hence the nearest
+        # name; Apple accepts the exact hex value. Google ignores both in
+        # subscribed calendars.
         if use_colors and e.status != "cancelled":
             css = nearest_css_name(e.color)
             if css:

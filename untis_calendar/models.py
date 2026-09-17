@@ -9,9 +9,9 @@ class LessonEvent:
     uid: str
     start: datetime
     end: datetime
-    subject: str  # Kuerzel, z. B. "EVP"
-    room: str | None  # Raumnummer, z. B. "R102"
-    teachers: list[str]  # Kuerzel, z. B. ["KL"]
+    subject: str  # abbreviation, e.g. "EVP"
+    room: str | None  # room number, e.g. "R102"
+    teachers: list[str]  # abbreviations, e.g. ["KL"]
     groups: list[str]
     status: str  # scheduled|cancelled|substitution|moved
     notes: str | None
@@ -20,28 +20,28 @@ class LessonEvent:
     source_school: str
     account_key: str
 
-    # Klarnamen aus Untis ("longname"). Untis liefert die praktisch immer mit,
-    # nur abgefragt hat sie vorher niemand.
+    # Full names from Untis ("longname"). Untis almost always sends them;
+    # they simply were never read.
     subject_long: str | None = None  # "Netzwerktechnik"
     teachers_long: list[str] = field(default_factory=list)  # ["Beispiel"]
     room_long: str | None = None  # "PC-Raum"
 
-    # Online-Unterricht (nur ueber die REST-Ansicht verfuegbar)
+    # Online lessons (only available through the REST view)
     online: bool = False
     meeting_url: str | None = None
 
-    # Verlegung und Vertretung (ebenfalls nur ueber die REST-Ansicht)
-    moved_from: datetime | None = None  # diese Stunde kommt von dort
-    moved_to: datetime | None = None  # diese Stunde findet dort statt
+    # Reschedules and substitutions (REST view as well)
+    moved_from: datetime | None = None  # this lesson came from there
+    moved_to: datetime | None = None  # this lesson takes place there
     substitutions: list[tuple] = field(default_factory=list)
 
-    # Fachfarbe aus Untis als Hex ("#80ffff")
+    # Subject colour from Untis as hex ("#80ffff")
     color: str | None = None
-    # Namen der belegten Unterrichtsstunden aus dem Untis-Raster ("1", "2")
+    # Period names from the school's timegrid ("1", "2")
     periods: list[str] = field(default_factory=list)
 
     def subject_display(self, style: str = "long") -> str:
-        """Fach fuer die Terminueberschrift."""
+        """Subject as it should appear in the event title."""
         if style == "short" or not self.subject_long:
             return self.subject
         if style == "both" and self.subject_long != self.subject:
@@ -49,7 +49,7 @@ class LessonEvent:
         return self.subject_long
 
     def period_display(self) -> str | None:
-        """ "1. Stunde" bzw. "1.-2. Stunde" bei zusammengefassten Doppelstunden."""
+        """ "1. Stunde", or "1.-2. Stunde" for merged double periods."""
         if not self.periods:
             return None
         if len(self.periods) == 1:
@@ -57,7 +57,7 @@ class LessonEvent:
         return f"{self.periods[0]}.-{self.periods[-1]}. Stunde"
 
     def teacher_display(self) -> list[str]:
-        """Lehrer mit Klarnamen, Kuerzel nur als Rueckfall."""
+        """Teachers by full name, falling back to the abbreviation."""
         if self.teachers_long:
             return self.teachers_long
         return self.teachers

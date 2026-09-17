@@ -1,4 +1,4 @@
-"""Anreicherung über die REST-Ansicht (Online-Unterricht, Stundentexte)."""
+"""Enrichment through the REST view (online lessons, lesson texts)."""
 
 from datetime import date
 
@@ -6,7 +6,7 @@ from untis_calendar.untis_rest import _clean_url, _find_url_in_text, _mondays
 
 
 def test_placeholder_urls_are_rejected():
-    """WebUntis liefert '0' statt einer URL, wenn kein Link gepflegt ist."""
+    """WebUntis returns '0' instead of a URL when no link is stored."""
     for junk in ("0", "", "-", "null", "none", None):
         assert _clean_url(junk) is None
 
@@ -21,7 +21,7 @@ def test_real_url_accepted():
 
 
 def test_url_found_in_lesson_text():
-    """Viele Lehrkraefte kleben den Link einfach in den Stundentext."""
+    """Many teachers simply paste the link into the lesson text."""
     got = _find_url_in_text("", "Bitte via https://meet.example.org/raum1 beitreten")
     assert got == "https://meet.example.org/raum1"
 

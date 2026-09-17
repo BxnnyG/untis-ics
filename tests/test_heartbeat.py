@@ -33,8 +33,8 @@ def test_success_pings_plain_url(monkeypatch):
 
 
 def test_failure_appends_fail_path(monkeypatch):
-    """Healthchecks.io-Konvention: /fail meldet den Fehler sofort, statt auf
-    das Ausbleiben des naechsten Pings zu warten."""
+    """Healthchecks.io convention: /fail reports the failure immediately instead
+    of waiting for the next ping to go missing."""
     post = FakePost()
     monkeypatch.setattr(heartbeat.requests, "post", post)
     heartbeat.send("https://hc.example/abc", ok=False)
@@ -49,7 +49,7 @@ def test_trailing_slash_does_not_double_up(monkeypatch):
 
 
 def test_network_error_never_raises(monkeypatch):
-    """Ein fehlgeschlagenes Lebenszeichen darf den Sync nicht stoeren."""
+    """A failed ping must never disturb the sync."""
     monkeypatch.setattr(
         heartbeat.requests, "post", FakePost(exc=requests.exceptions.ConnectionError())
     )
@@ -63,7 +63,7 @@ def test_detail_is_truncated(monkeypatch):
     assert len(post.calls[0][1]) == 2000
 
 
-# --- Schwelle fuer "veraltet" -----------------------------------------------
+# --- Staleness threshold ----------------------------------------------------
 
 
 def _cfg(tmp_path, **app):
@@ -95,7 +95,7 @@ def test_threshold_defaults_to_three_intervals(tmp_path):
 
 
 def test_threshold_has_a_floor(tmp_path):
-    """Bei sehr kurzen Intervallen soll nicht bei jedem Aussetzer Alarm sein."""
+    """Very short intervals should not alarm on every hiccup."""
     cfg = _cfg(tmp_path, refresh_interval_minutes=1, refresh_idle_minutes=1)
     assert stale_threshold_minutes(cfg) == 30
 

@@ -13,7 +13,7 @@ from .utils import stable_uid, tz_aware
 
 logger = logging.getLogger(__name__)
 
-# WebUntis Element-Typen
+# WebUntis element types
 ELEMENT_TYPES = {"class": 1, "teacher": 2, "subject": 3, "room": 4, "student": 5}
 
 
@@ -24,11 +24,11 @@ class UntisClient:
     def fetch_events(
         self, account: AccountConfig, now: datetime | None = None
     ) -> list[LessonEvent]:
-        """Holt den Stundenplan für einen Account.
+        """Fetch the timetable for one account.
 
-        Wirft bei Fehlern eine Exception. Bewusst KEIN leeres Ergebnis bei
-        Fehlern zurückgeben - sonst überschreibt ein kurzer Ausfall den
-        zuletzt bekannten guten Kalender mit einem leeren.
+        Raises on failure. Deliberately does NOT return an empty result on
+        error - otherwise a brief outage would overwrite the last known good
+        calendar with an empty one.
         """
         now = now or datetime.now()
         start = (now - timedelta(days=self.app.window_days_before)).date()
@@ -37,8 +37,8 @@ class UntisClient:
         server = account.server or resolve_server(account.school)
         if not server:
             raise UntisError(
-                f"Kein Server für Schule '{account.school}' gefunden. "
-                f"Bitte 'server:' in der Config setzen oder Schulnamen prüfen."
+                f"No server found for school '{account.school}'. "
+                f"Set 'server:' in the config or check the school name."
             )
 
         with direct_untis_login(
@@ -48,14 +48,14 @@ class UntisClient:
             password=account.get_password(),
             verify_ssl=account.verify_ssl,
         ) as sess:
-            logger.info("Abrufe Stundenplan für %s von %s bis %s", account.key, start, end)
+            logger.info("Fetching timetable for %s from %s to %s", account.key, start, end)
             raw_list = sess.timetable(start=start, end=end, element=self._element_kwargs(account))
-            logger.info("Empfangen: %d Roheinträge für %s", len(raw_list), account.key)
+            logger.info("Received %d raw entries for %s", len(raw_list), account.key)
             person_id, person_type = sess.person_id, sess.person_type
             timegrid = sess.timegrid() if self.app.show_period_numbers else {}
 
-        # Online-Unterricht und Stundentexte kennt nur die REST-Ansicht.
-        # Schlaegt das fehl, laeuft der Sync ohne diese Extras weiter.
+        # Only the REST view knows about online lessons and lesson texts.
+        # If that fails, the sync continues without those extras.
         extras = {}
         if self.app.fetch_online_info and person_id and person_type:
             extras = fetch_lesson_extras(
@@ -71,7 +71,7 @@ class UntisClient:
             )
             online_count = sum(1 for e in extras.values() if e.online)
             if online_count:
-                logger.info("REST: %d Stunde(n) als Online-Unterricht markiert", online_count)
+                logger.info("REST: %d lesson(s) flagged as online", online_count)
 
         events = [self._map_raw_to_event(r, account, extras, timegrid) for r in raw_list]
         self._link_moved_lessons(events)
@@ -81,22 +81,22 @@ class UntisClient:
         events.sort(key=lambda e: (e.start, e.subject))
         if self.app.merge_consecutive:
             events = self._merge_consecutive(events)
-        logger.info("Ergebnis: %d Termine für %s", len(events), account.key)
+        logger.info("Result: %d events for %s", len(events), account.key)
         return events
 
     def _element_kwargs(self, account: AccountConfig) -> dict[str, Any] | None:
-        """Element für getTimetable. None -> eingeloggter Benutzer wird verwendet."""
+        """Element for getTimetable. None -> the logged-in user is used."""
         el = account.element
         if not el or not el.type:
             return None
         type_id = ELEMENT_TYPES.get(el.type)
         if not type_id:
-            logger.warning("Unbekannter element.type '%s' - ignoriert", el.type)
+            logger.warning("Unknown element.type '%s' - ignored", el.type)
             return None
         if el.id is None:
             logger.warning(
-                "element.type '%s' gesetzt, aber keine element.id - "
-                "die JSON-RPC-API braucht eine numerische ID. Wird ignoriert.",
+                "element.type '%s' set but no element.id - "
+                "the JSON-RPC API needs a numeric id. Ignoring.",
                 el.type,
             )
             return None
@@ -127,13 +127,13 @@ class UntisClient:
         teachers_long = self._all_names(te, long=True)
         groups = self._all_names(r.get("kl") or r.get("groups"))
 
-        # code: "cancelled" = entfällt, "irregular" = Vertretung/Änderung
+        # code: "cancelled" = dropped, "irregular" = substitution/change
         code = str(r.get("code", "") or "").lower()
         if r.get("cancelled") or code in {"cancelled", "canceled", "cancel"}:
             status = "cancelled"
         elif code == "irregular":
-            # "irregular" heisst nur "irgendwas weicht ab". Was genau, sagt
-            # erst die REST-Ansicht (verlegt vs. Vertretung).
+            # "irregular" only means "something deviates". What exactly, only
+            # the REST view reveals (moved vs. substituted).
             status = "substitution"
         else:
             status = "scheduled"
@@ -169,9 +169,9 @@ class UntisClient:
 
         notes = " | ".join(dict.fromkeys(note_parts)) or None
 
-        # UID stabil an der Untis-Perioden-ID festmachen: verschiebt sich eine
-        # Stunde (Raum/Zeit/Vertretung), bleibt es derselbe Kalendereintrag und
-        # wird aktualisiert statt dupliziert.
+        # Anchor the UID to the Untis period id: if a lesson moves (room,
+        # time, substitution) it stays the same calendar entry and gets updated
+        # instead of duplicated.
         if source_id:
             uid = stable_uid(school, acct, "lesson", source_id)
         else:
@@ -207,7 +207,7 @@ class UntisClient:
 
     @staticmethod
     def _periods_for(r: dict[str, Any], timegrid: dict[int, str] | None) -> list[str]:
-        """Name der Unterrichtsstunde zur Startzeit, falls das Raster bekannt ist."""
+        """Period name for a start time, when the timegrid is known."""
         if not timegrid:
             return []
         start = r.get("startTime")
@@ -218,7 +218,7 @@ class UntisClient:
 
     @staticmethod
     def _slot_to_dt(slot: tuple | None, tz: str) -> datetime | None:
-        """(20260922, 1700) -> datetime 2026-09-22 17:00 in der Zielzone."""
+        """(20260922, 1700) -> datetime 2026-09-22 17:00 in the target zone."""
         if not slot:
             return None
         ymd, hhmm = slot
@@ -237,12 +237,11 @@ class UntisClient:
 
     @staticmethod
     def _link_moved_lessons(events: list[LessonEvent]) -> None:
-        """Entfallene Quell-Stunde mit ihrem neuen Termin verknuepfen.
+        """Link a cancelled source lesson to where it now takes place.
 
-        Die REST-Ansicht liefert entfallene Stunden nicht mit, kennt aber bei
-        der verlegten Stunde den Ursprungstermin. Daraus laesst sich die
-        Gegenrichtung ergaenzen, damit am entfallenen Termin steht, wohin die
-        Stunde verschoben wurde.
+        The REST view omits cancelled lessons but does know, for the moved
+        lesson, where it originally sat. That lets the reverse direction be
+        filled in, so the cancelled slot can say where the lesson went.
         """
         by_slot: dict[tuple, LessonEvent] = {
             (e.start.date(), e.start.hour, e.start.minute): e
@@ -311,7 +310,7 @@ class UntisClient:
 
     @staticmethod
     def _merge_consecutive(events: list[LessonEvent]) -> list[LessonEvent]:
-        """Fasst direkt aufeinanderfolgende, identische Stunden zu einem Block zusammen.
+        """Merge back-to-back identical lessons into a single block.
 
         Aus 2x45 Min Deutsch (7:30-8:15, 8:15-9:00) wird ein Termin 7:30-9:00.
         Kurze Pausen (bis 30 Min) zwischen gleichen Stunden werden überbrückt.

@@ -1,4 +1,4 @@
-"""Adaptives Refresh-Intervall: tagsüber häufig, nachts selten."""
+"""Adaptive refresh interval: frequent by day, rare at night."""
 
 from datetime import datetime
 
@@ -25,7 +25,7 @@ def test_active_hours_use_short_interval():
 
 
 def test_night_uses_long_interval():
-    """Ein Stundenplan aendert sich um 3 Uhr nicht."""
+    """A timetable does not change at 3am."""
     a = cfg(
         refresh_interval_minutes=15,
         refresh_idle_minutes=120,
@@ -48,7 +48,7 @@ def test_boundaries_are_inclusive_start_exclusive_end():
 
 
 def test_window_across_midnight():
-    """Nachtschicht-Fenster 22 bis 6 Uhr."""
+    """Night-shift window, 22 to 6."""
     a = cfg(
         refresh_interval_minutes=10,
         refresh_idle_minutes=90,

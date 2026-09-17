@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Schulen in WebUntis suchen.
+"""Search for schools in WebUntis.
 
-Liefert den 'loginName' (gehoert als `school` in die config.yaml) und den
-aktuell zustaendigen Server.
+Prints the 'loginName' (that is what goes into config.yaml as `school`) and
+the server currently responsible for it.
 
-    python find_schools.py "Muster-Berufskolleg"
+    python find_schools.py "My School Name"
 """
 
 from __future__ import annotations
@@ -23,20 +23,20 @@ def main(argv: list[str]) -> int:
     try:
         schools = search_schools(query)
     except Exception as e:
-        print(f"Suche fehlgeschlagen: {e}", file=sys.stderr)
+        print(f"Search failed: {e}", file=sys.stderr)
         return 1
 
     if not schools:
-        print(f"Keine Treffer für '{query}'.")
-        print("Tipp: Teil des Schulnamens oder des Ortes probieren.")
+        print(f"No match for '{query}'.")
+        print("Tip: try part of the school name, or the town.")
         return 1
 
-    print(f"\n{len(schools)} Treffer für '{query}':\n")
+    print(f"\n{len(schools)} match(es) for '{query}':\n")
     for s in schools:
         print(f"  {s.get('displayName', '?')}")
         print(f"    school : {s.get('loginName')}")
         print(f"    server : {s.get('server')}")
-        print(f"    Adresse: {s.get('address', '-')}")
+        print(f"    address: {s.get('address', '-')}")
         print()
     return 0
 

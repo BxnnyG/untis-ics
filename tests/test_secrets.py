@@ -1,4 +1,4 @@
-"""Secrets kommen aus der Umgebung, nicht aus der config.yaml."""
+"""Secrets come from the environment, not from config.yaml."""
 
 import textwrap
 
@@ -46,7 +46,7 @@ def test_missing_env_gives_clear_error(cfg_path, monkeypatch):
 
 
 def test_existing_env_wins_over_dotenv(cfg_path, monkeypatch):
-    """systemd setzt die Variable bereits - eine .env darf sie nicht kippen."""
+    """systemd already set the variable - a .env must not override it."""
     (cfg_path.parent / ".env").write_text("TEST_UNTIS_PASS=aus_datei\n")
     monkeypatch.setenv("TEST_UNTIS_PASS", "aus_systemd")
     cfg = Config.load(cfg_path)

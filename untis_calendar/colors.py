@@ -1,8 +1,8 @@
-"""Umrechnung der Untis-Fachfarben in ICS-taugliche Angaben.
+"""Convert the subject colours WebUntis reports into what ICS accepts.
 
-Untis liefert Farben als Hex ("#80ffff"). RFC 7986 erlaubt fuer die
-COLOR-Eigenschaft aber nur CSS3-Farbnamen, keine Hexwerte. Deshalb wird der
-naechstgelegene benannte Farbton gesucht.
+Untis returns colours as hex ("#80ffff"). RFC 7986 only allows CSS3 colour
+names for the COLOR property, not hex values, so the nearest named colour is
+used instead.
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ import re
 
 HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
-# Auszug der CSS3-Farbnamen, breit genug gestreut, um jeden Untis-Farbton
-# auf einen erkennbaren Namen abzubilden.
+# A spread of CSS3 colour names, wide enough that any Untis colour maps to
+# something recognisable.
 CSS3_COLORS: dict[str, tuple[int, int, int]] = {
     "black": (0, 0, 0),
     "gray": (128, 128, 128),
@@ -48,7 +48,7 @@ CSS3_COLORS: dict[str, tuple[int, int, int]] = {
 
 
 def parse_hex(value: str | None) -> tuple[int, int, int] | None:
-    """'#80ffff' -> (128, 255, 255). Gibt None bei ungueltiger Eingabe."""
+    """'#80ffff' -> (128, 255, 255). Returns None for invalid input."""
     if not value:
         return None
     m = HEX_RE.match(str(value).strip())
@@ -59,10 +59,10 @@ def parse_hex(value: str | None) -> tuple[int, int, int] | None:
 
 
 def nearest_css_name(value: str | None) -> str | None:
-    """Naechstgelegener CSS3-Farbname zu einem Hexwert.
+    """Nearest CSS3 colour name for a hex value.
 
-    Gewichteter Abstand im RGB-Raum - grob an der Helligkeitswahrnehmung
-    orientiert, damit z. B. ein helles Gruen nicht auf 'navy' faellt.
+    Weighted distance in RGB space, roughly following perceived brightness so
+    that a light green does not end up as 'navy'.
     """
     rgb = parse_hex(value)
     if rgb is None:
@@ -77,7 +77,7 @@ def nearest_css_name(value: str | None) -> str | None:
 
 
 def normalise_hex(value: str | None) -> str | None:
-    """Vereinheitlicht auf '#rrggbb' in Kleinschreibung."""
+    """Normalise to lowercase '#rrggbb'."""
     rgb = parse_hex(value)
     if rgb is None:
         return None

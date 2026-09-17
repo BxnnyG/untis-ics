@@ -1,521 +1,262 @@
-# Deployment-Anleitung: Untis → ICS auf Debian
+# Deployment
 
-Vollständige Anleitung zum Betrieb des Untis-Kalender-Tools auf einem Debian-Server.
+Two supported ways to run this: Docker, or a virtualenv behind systemd.
+Both end up serving the same feeds.
 
-## Übersicht
-
-Das Tool kann auf zwei Arten betrieben werden:
-1. **CLI + Cron**: Periodische ICS-Generierung + statischer Webserver (Apache/Nginx)
-2. **FastAPI-Server**: Dynamischer Webserver mit automatischem Refresh
-
-Empfohlen für Debian: **CLI + Cron + Apache** (einfacher, weniger Ressourcen)
-
----
-
-## Voraussetzungen
-
-- Debian 11/12 oder Ubuntu 20.04+
-- Python 3.9+ (idealerweise 3.11+)
-- Root- oder sudo-Zugriff
-- Optional: Apache2 oder Nginx für statische Feeds
-
----
-
-## Installation auf Debian
-
-### 1. System vorbereiten
+## Docker
 
 ```bash
-# System aktualisieren
-sudo apt update && sudo apt upgrade -y
+git clone https://github.com/BxnnyG/untis-ics.git
+cd untis-ics
 
-# Python und Tools installieren
-sudo apt install -y python3 python3-pip python3-venv git
+cp config.example.yaml config.yaml    # accounts, no secrets
+cp .env.example .env                  # passwords and tokens
+chmod 600 .env
 
-# Projekt-Verzeichnis erstellen
-sudo mkdir -p /opt/untis-calendar
-sudo chown $USER:$USER /opt/untis-calendar
-cd /opt/untis-calendar
-
-# Code hochladen (via git, scp oder rsync)
-# Beispiel: rsync -avz . user@server:/opt/untis-calendar/
+docker compose up -d
+docker compose logs -f
 ```
 
-### 2. Python-Umgebung einrichten
+`config.yaml` is mounted read-only. Generated feeds live in a named volume,
+so the last good state survives a restart — without it, a WebUntis outage
+right after a restart would leave you with nothing to serve.
+
+Check it came up:
 
 ```bash
-cd /opt/untis-calendar
-
-# Virtual Environment erstellen
-python3 -m venv .venv
-
-# Aktivieren
-source .venv/bin/activate
-
-# Dependencies installieren
-pip install -U pip
-pip install -r requirements.txt
+curl -s localhost:8080/health
+curl -s "localhost:8080/status?token=$STATUS_TOKEN"
 ```
 
-### 3. Konfiguration anpassen
+To build locally instead of pulling:
 
 ```bash
-# Config aus Beispiel kopieren
-cp config.example.yaml config.yaml
-nano config.yaml
+docker compose build
 ```
 
-Wichtige Einstellungen in `config.yaml`:
-```yaml
-app:
-  output_dir: "/var/www/untis-calendar"  # Webserver-Root
+## systemd
 
-accounts:
-  - key: "account1"
-    school: "schulname"        # WebUntis-loginName, nicht der Klartextname
-                               # ermitteln: python find_schools.py "Schule"
-    server: "schule.webuntis.com"  # optional, sonst automatisch ermittelt
-    username: "user"
-    password_env: "UNTIS_PASS_ACCOUNT1"   # Wert in /etc/untis-sync.env
-    verify_ssl: true           # nur bei echten Zertifikatsproblemen auf false
-    calendar:
-      file_name: "kalender1.ics"
-      display_name: "Stundenplan Account 1"
-      web_feed: true
-      token_env: "FEED_TOKEN_ACCOUNT1"    # Wert in /etc/untis-sync.env
-```
-
-**Keine Passwörter oder Tokens in die `config.yaml`.** Die gehören in eine
-root-only Datei, die systemd einliest:
+### Install
 
 ```bash
-sudo install -m 600 -o root -g root /dev/null /etc/untis-sync.env
-sudo nano /etc/untis-sync.env
+sudo apt install -y python3 python3-venv git
+sudo useradd --system --create-home --shell /usr/sbin/nologin untis
+sudo git clone https://github.com/BxnnyG/untis-ics.git /opt/untis-ics
+cd /opt/untis-ics
+
+sudo python3 -m venv .venv
+sudo .venv/bin/pip install -e .
+sudo chown -R untis:untis /opt/untis-ics
+```
+
+### Configure
+
+```bash
+sudo -u untis cp config.example.yaml config.yaml
+sudo -u untis nano config.yaml
+```
+
+Find your school's login name and server:
+
+```bash
+sudo -u untis .venv/bin/python find_schools.py "My School"
+```
+
+### Secrets
+
+Keep them out of `config.yaml` and out of any directory the service user can
+read:
+
+```bash
+sudo install -m 600 -o root -g root /dev/null /etc/untis-ics.env
+sudo nano /etc/untis-ics.env
 ```
 
 ```ini
-UNTIS_PASS_ACCOUNT1=geheim
-FEED_TOKEN_ACCOUNT1=zufallstoken
+UNTIS_PASS_STUDENT1=...
+FEED_TOKEN_STUDENT1=...
+STATUS_TOKEN=...
+HEARTBEAT_URL=...
 ```
 
-In der systemd-Unit:
+systemd reads this **as root** and hands the values to the unprivileged
+service, which cannot read the file itself. That matters on a host where a
+web server runs under the same user: a compromised web application can read
+`config.yaml`, but not this.
 
-```ini
-[Service]
-User=www-data
-EnvironmentFile=/etc/untis-sync.env
-```
+### Unit
 
-systemd liest die Datei als root und reicht die Werte an den
-unprivilegierten Dienst weiter – der Dienstbenutzer kann sie nicht von der
-Platte lesen. Siehe Abschnitt "Sicherheit" in der README.
+`/etc/systemd/system/untis-ics.service`:
 
-### 4. Ersten Test durchführen
-
-```bash
-# Aktiviere venv falls noch nicht aktiv
-source .venv/bin/activate
-
-# ICS generieren
-python cli.py generate --config config.yaml
-
-# Prüfen
-ls -lh out/
-cat out/*.ics | head -20
-```
-
----
-
-## Variante A: CLI + Cron (Empfohlen)
-
-### 1. Output-Verzeichnis für Webserver
-
-```bash
-# Webserver-Root erstellen
-sudo mkdir -p /var/www/untis-calendar
-sudo chown www-data:www-data /var/www/untis-calendar
-
-# In config.yaml setzen:
-# app.output_dir: "/var/www/untis-calendar"
-```
-
-### 2. Cron-Job einrichten
-
-Bearbeite Crontab:
-```bash
-crontab -e
-```
-
-Füge hinzu (alle 15 Minuten):
-```cron
-*/15 * * * * cd /opt/untis-calendar && /opt/untis-calendar/.venv/bin/python cli.py generate --config /opt/untis-calendar/config.yaml >> /var/log/untis-calendar.log 2>&1
-```
-
-Oder stündlich (zur vollen Stunde):
-```cron
-0 * * * * cd /opt/untis-calendar && /opt/untis-calendar/.venv/bin/python cli.py generate --config /opt/untis-calendar/config.yaml >> /var/log/untis-calendar.log 2>&1
-```
-
-Log-Rotation einrichten:
-```bash
-sudo nano /etc/logrotate.d/untis-calendar
-```
-
-Inhalt:
-```
-/var/log/untis-calendar.log {
-    daily
-    rotate 7
-    compress
-    missingok
-    notifempty
-}
-```
-
-### 3. Apache einrichten (statische ICS-Feeds)
-
-```bash
-# Apache installieren
-sudo apt install -y apache2
-
-# Virtual Host erstellen
-sudo nano /etc/apache2/sites-available/untis-calendar.conf
-```
-
-Inhalt:
-```apache
-<VirtualHost *:80>
-    ServerName kalender.deine-domain.de
-    DocumentRoot /var/www/untis-calendar
-
-    <Directory /var/www/untis-calendar>
-        Options -Indexes +FollowSymLinks
-        AllowOverride None
-        Require all granted
-        
-        # CORS für Kalender-Clients
-        Header set Access-Control-Allow-Origin "*"
-        
-        # Caching (15 Minuten)
-        <FilesMatch "\.ics$">
-            Header set Content-Type "text/calendar; charset=utf-8"
-            Header set Cache-Control "max-age=900, public"
-        </FilesMatch>
-    </Directory>
-
-    ErrorLog ${APACHE_LOG_DIR}/untis-calendar-error.log
-    CustomLog ${APACHE_LOG_DIR}/untis-calendar-access.log combined
-</VirtualHost>
-```
-
-Aktivieren:
-```bash
-# Modul aktivieren
-sudo a2enmod headers
-
-# Site aktivieren
-sudo a2ensite untis-calendar.conf
-sudo systemctl reload apache2
-```
-
-### 4. Feed-URLs nutzen
-
-Feeds sind jetzt erreichbar unter:
-```
-http://kalender.deine-domain.de/kalender1.ics?token=geheimer-token-hier
-```
-
-Für Google Calendar:
-1. Google Calendar öffnen
-2. Links: "Weitere Kalender" → "Per URL hinzufügen"
-3. URL eingeben mit Token
-4. Fertig!
-
----
-
-## Variante B: FastAPI-Server (Dynamisch)
-
-### 1. Systemd Service erstellen
-
-```bash
-sudo nano /etc/systemd/system/untis-calendar.service
-```
-
-Inhalt:
 ```ini
 [Unit]
-Description=Untis ICS Calendar Server
-After=network.target
+Description=untis-ics
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=www-data
-WorkingDirectory=/opt/untis-calendar
+User=untis
+Group=untis
+WorkingDirectory=/opt/untis-ics
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/opt/untis-calendar/.venv/bin/python cli.py serve --config /opt/untis-calendar/config.yaml --host 127.0.0.1 --port 8080
+EnvironmentFile=/etc/untis-ics.env
+ExecStart=/opt/untis-ics/.venv/bin/untis-ics serve \
+    --config /opt/untis-ics/config.yaml --host 127.0.0.1 --port 8080
 Restart=on-failure
 RestartSec=10s
 
-# Security
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/untis-ics/out
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Service aktivieren:
+Binding to `127.0.0.1` and putting a reverse proxy in front is the
+recommended setup — it gives you TLS and a place for rate limiting.
+
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable untis-calendar
-sudo systemctl start untis-calendar
-sudo systemctl status untis-calendar
+sudo systemctl enable --now untis-ics
+sudo systemctl status untis-ics
+journalctl -u untis-ics -f
 ```
 
-### 2. Apache Reverse Proxy
+### Verify before trusting it
 
 ```bash
-# Module aktivieren
-sudo a2enmod proxy proxy_http
-
-# Virtual Host anpassen
-sudo nano /etc/apache2/sites-available/untis-calendar.conf
+sudo -u untis .venv/bin/untis-ics check --config /opt/untis-ics/config.yaml
 ```
 
-Inhalt:
+This reports, per account, the resolved server, whether the login works, and
+the first few lessons. Run it whenever something looks off.
+
+## CLI plus cron
+
+If you would rather not run a service, generate the files periodically and
+let any web server serve them:
+
+```cron
+*/15 6-22 * * * cd /opt/untis-ics && ./.venv/bin/untis-ics generate --config config.yaml >> /var/log/untis-ics.log 2>&1
+```
+
+`generate` exits non-zero when an account fails, so cron's mail or your job
+monitor notices. It never overwrites an existing calendar with an empty one.
+
+## Reverse proxy
+
+### Caddy
+
+```
+cal.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+### nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name cal.example.com;
+
+    # certbot --nginx -d cal.example.com
+
+    # Feed tokens live in the query string; keep them out of the access log.
+    access_log /var/log/nginx/untis.log combined;
+
+    limit_req_zone $binary_remote_addr zone=untis:10m rate=30r/m;
+
+    location / {
+        limit_req zone=untis burst=10 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Rate limiting is deliberately not built into the application. This is where
+it belongs.
+
+### Apache
+
 ```apache
-<VirtualHost *:80>
-    ServerName kalender.deine-domain.de
+<VirtualHost *:443>
+    ServerName cal.example.com
 
     ProxyPreserveHost On
-    ProxyPass / http://127.0.0.1:8080/
+    ProxyPass        / http://127.0.0.1:8080/
     ProxyPassReverse / http://127.0.0.1:8080/
-
-    ErrorLog ${APACHE_LOG_DIR}/untis-calendar-error.log
-    CustomLog ${APACHE_LOG_DIR}/untis-calendar-access.log combined
 </VirtualHost>
 ```
 
-Reload:
 ```bash
+sudo a2enmod proxy proxy_http
 sudo systemctl reload apache2
 ```
 
-Feed-URLs:
+## Subscribing
+
 ```
-http://kalender.deine-domain.de/calendar/account1.ics?token=geheimer-token-hier
+https://cal.example.com/calendar/<key>.ics?token=<token>
 ```
 
----
+In Google Calendar: *Other calendars → + → From URL*. One feed becomes one
+calendar. Note that Google decides its own fetch cadence — usually a few
+hours — and that changing a token means deleting and re-adding the
+subscription, since Google cannot edit an existing URL.
 
-## SSL/HTTPS einrichten (Let's Encrypt)
+## Monitoring
+
+Point `HEARTBEAT_URL` at a Healthchecks.io check or an Uptime Kuma push
+monitor. The service pings it after each refresh cycle, but only when every
+enabled account has fresh data. If the service dies or a login stops working,
+the ping stops and the monitor alerts.
+
+This is worth setting up. The failure this project was built around is a sync
+that quietly broke and stayed broken, because nothing was watching.
+
+## Updating
 
 ```bash
-# Certbot installieren
-sudo apt install -y certbot python3-certbot-apache
-
-# Zertifikat anfordern
-sudo certbot --apache -d kalender.deine-domain.de
-
-# Auto-Renewal prüfen
-sudo certbot renew --dry-run
+cd /opt/untis-ics
+sudo -u untis git pull
+sudo .venv/bin/pip install -e .
+sudo systemctl restart untis-ics
 ```
 
-Feeds dann über HTTPS:
-```
-https://kalender.deine-domain.de/kalender1.ics?token=...
+Docker:
+
+```bash
+docker compose pull && docker compose up -d
 ```
 
----
+## Backup
+
+Worth keeping: `config.yaml` and `/etc/untis-ics.env`. Everything in `out/`
+is regenerated on the next refresh.
+
+```bash
+sudo tar czf untis-backup-$(date +%F).tar.gz \
+    -C / opt/untis-ics/config.yaml etc/untis-ics.env
+sudo chmod 600 untis-backup-*.tar.gz
+```
+
+That archive contains credentials. Treat it accordingly.
 
 ## Troubleshooting
 
-### Problem: "invalid schoolname"
-
-**Ursache**: Schulname in `config.yaml` ist falsch oder case-sensitive.
-
-**Lösung**:
-1. WebUntis im Browser öffnen
-2. Nach Login URL prüfen: `https://SERVER/WebUntis/?school=SCHULNAME`
-3. Exakten Namen (inkl. Groß-/Kleinschreibung) in Config übernehmen
-
-### Problem: SSL-Zertifikatsfehler
-
-**Ursache**: Server nutzt selbst-signiertes Zertifikat.
-
-**Lösung**: In `config.yaml` setzen:
-```yaml
-accounts:
-  - verify_ssl: false
-```
-
-### Problem: Keine Events in ICS
-
-**Prüfungen**:
-```bash
-# Log anschauen
-tail -f /var/log/untis-calendar.log
-
-# Manuell testen mit Debug
-source /opt/untis-calendar/.venv/bin/activate
-python cli.py generate --config config.yaml
-
-# ICS prüfen
-cat /var/www/untis-calendar/*.ics | grep "BEGIN:VEVENT" | wc -l
-```
-
-**Häufige Ursachen**:
-- Falscher Username/Passwort
-- Falscher Schulname
-- Falscher Server
-- Zeitfenster außerhalb der Unterrichtszeiten (siehe `window_days_before/after`)
-
-### Problem: "unhashable type: 'list'"
-
-**Ursache**: Bug beim Parsen von WebUntis-Daten (bereits gefixt in aktueller Version).
-
-**Lösung**: Aktuellen Code verwenden (siehe `untis_client.py` Subject-Parsing).
-
-### Problem: Cron läuft nicht
-
-**Prüfungen**:
-```bash
-# Cron-Log prüfen
-sudo grep CRON /var/log/syslog | tail -20
-
-# Manuell ausführen
-cd /opt/untis-calendar
-source .venv/bin/activate
-python cli.py generate --config config.yaml
-
-# Pfade in Cron absolut angeben!
-```
-
-### Problem: Permissions
-
-```bash
-# Output-Verzeichnis Rechte prüfen
-ls -ld /var/www/untis-calendar
-sudo chown -R www-data:www-data /var/www/untis-calendar
-sudo chmod 755 /var/www/untis-calendar
-```
-
----
-
-## Wartung
-
-### Updates installieren
-
-```bash
-cd /opt/untis-calendar
-source .venv/bin/activate
-
-# Dependencies aktualisieren
-pip install -U -r requirements.txt
-
-# Service neustarten (falls FastAPI)
-sudo systemctl restart untis-calendar
-```
-
-### Logs überwachen
-
-```bash
-# Cron-Log
-tail -f /var/log/untis-calendar.log
-
-# Apache-Log
-sudo tail -f /var/log/apache2/untis-calendar-access.log
-
-# Systemd-Log (FastAPI)
-sudo journalctl -u untis-calendar -f
-```
-
-### Backup
-
-```bash
-# Config sichern
-cp /opt/untis-calendar/config.yaml ~/config.yaml.backup
-
-# Oder automatisch (täglich)
-echo "0 2 * * * cp /opt/untis-calendar/config.yaml /backup/untis-config-\$(date +\%Y\%m\%d).yaml" | crontab -
-```
-
----
-
-## Performance-Tipps
-
-### Cache-TTL anpassen
-
-In `config.yaml`:
-```yaml
-app:
-  cache_ttl_seconds: 900  # 15 Minuten (Standard: 600)
-```
-
-### Zeitfenster reduzieren
-
-```yaml
-app:
-  window_days_before: 1   # Statt 3
-  window_days_after: 14   # Statt 28
-```
-
-### Apache Compression
-
-```bash
-sudo a2enmod deflate
-```
-
-In Virtual Host:
-```apache
-<IfModule mod_deflate.c>
-    AddOutputFilterByType DEFLATE text/calendar
-</IfModule>
-```
-
----
-
-## Sicherheit
-
-### Tokens schützen
-
-- Lange, zufällige Tokens verwenden (min. 24 Zeichen)
-- Verschiedene Tokens pro Account/Feed
-- Nicht in Git committen
-
-### Firewall einrichten
-
-```bash
-# UFW aktivieren
-sudo apt install -y ufw
-sudo ufw allow 22/tcp    # SSH
-sudo ufw allow 80/tcp    # HTTP
-sudo ufw allow 443/tcp   # HTTPS
-sudo ufw enable
-```
-
-### Rate Limiting (Apache)
-
-```bash
-sudo a2enmod ratelimit
-```
-
-In Virtual Host:
-```apache
-<Location />
-    SetOutputFilter RATE_LIMIT
-    SetEnv rate-limit 400
-</Location>
-```
-
----
-
-## Kontakt & Support
-
-Bei Problemen:
-1. Logs prüfen (siehe Troubleshooting)
-2. Config auf Tippfehler prüfen
-3. Manuellen Test durchführen
-4. Python-Version prüfen (`python3 --version` >= 3.9)
-
-Projekt-Repository: (URL einfügen wenn vorhanden)
+| Symptom | Cause |
+|---------|-------|
+| `404` on `/WebUntis/jsonrpc.do` | School moved servers, or `school` is wrong. `untis-ics check` shows the correct host. |
+| `bad credentials` | Password expired. Verify in the WebUntis web login first — repeated failures lock the account. |
+| Feed returns `404` | Wrong token or unknown account key; both answer identically by design. |
+| `/status` returns `404` | `status_token_env` is unset or the token is wrong. It is fail-closed. |
+| Calendar empty in Google | Check `/status`. If the feed has events, Google simply has not re-fetched yet. |
+| Service starts but feeds are stale | Check `journalctl` for login errors; `/status` names the failing account. |
+| Permission errors on `out/` | The service user must own it: `chown -R untis:untis /opt/untis-ics/out`. |

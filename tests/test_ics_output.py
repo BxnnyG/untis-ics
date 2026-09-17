@@ -34,14 +34,14 @@ def test_ics_parses_and_has_name():
 
 
 def test_refresh_interval_is_valid_iso_duration():
-    """Muss PT30M sein - '0:30:00' waere kein gueltiger iCal-Wert."""
+    """Must be PT30M - '0:30:00' is not a valid iCalendar duration."""
     ics = events_to_ics([ev()], refresh_minutes=30)
     assert b"REFRESH-INTERVAL;VALUE=DURATION:PT30M" in ics
 
 
 def test_cancelled_event_marked_and_transparent():
-    """Sichtbar gekennzeichnet und zeitlich nicht blockierend.
-    Zum STATUS siehe test_cancelled_stays_visible_by_default."""
+    """Visibly marked and not blocking the time.
+    For STATUS see test_cancelled_stays_visible_by_default."""
     ics = events_to_ics([ev(status="cancelled")])
     cal = Calendar.from_ical(ics)
     vev = cal.walk("VEVENT")[0]
@@ -79,7 +79,7 @@ def test_description_pairs_teacher_name_and_code():
 
 
 def test_location_stays_room_number():
-    """Im Gebaeude sucht man R101, nicht 'Hauptgebaeude'."""
+    """In the building you look for R101, not 'Hauptgebaeude'."""
     e = ev(room="R101", room_long="Hauptgebaeude")
     cal = Calendar.from_ical(events_to_ics([e]))
     assert str(cal.walk("VEVENT")[0]["LOCATION"]) == "R101"
@@ -89,8 +89,8 @@ def test_location_stays_room_number():
 
 
 def test_cancelled_stays_visible_by_default():
-    """Google blendet STATUS:CANCELLED aus - der Termin waere dann komplett
-    weg statt sichtbar gekennzeichnet."""
+    """Google hides STATUS:CANCELLED - the event would vanish entirely instead
+    of being visibly marked."""
     cal = Calendar.from_ical(events_to_ics([ev(status="cancelled")]))
     vev = cal.walk("VEVENT")[0]
     assert str(vev["STATUS"]) == "CONFIRMED"
@@ -129,7 +129,7 @@ def test_meeting_url_lands_in_url_property():
 
 
 def test_online_without_room_puts_link_in_location():
-    """Ohne Raum ist der Meeting-Link die nuetzlichste Ortsangabe."""
+    """Without a room, the meeting link is the most useful location."""
     link = "https://meet.example.org/abc"
     cal = Calendar.from_ical(events_to_ics([ev(room=None, online=True, meeting_url=link)]))
     assert str(cal.walk("VEVENT")[0]["LOCATION"]) == link
@@ -152,13 +152,13 @@ def test_cancelled_beats_online_marker():
     assert str(cal.walk("VEVENT")[0]["SUMMARY"]).startswith("❌")
 
 
-# --- Verlegung und Vertretung in der Anzeige ---------------------------------
+# --- Reschedules and substitutions in the output ----------------------------
 
 from datetime import datetime as _dt
 
 
 def test_cancelled_names_new_slot_in_title():
-    """Beim Entfall interessiert vor allem, wohin die Stunde verlegt wurde."""
+    """For a cancellation, where the lesson moved to is what matters."""
     e = ev(status="cancelled", moved_to=_dt(2026, 9, 15, 18, 40, tzinfo=timezone.utc))
     su = str(Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]["SUMMARY"])
     assert su.startswith("❌ Verlegt")
@@ -166,7 +166,7 @@ def test_cancelled_names_new_slot_in_title():
 
 
 def test_cancelled_drops_room_from_title_and_location():
-    """Der Raum einer entfallenen Stunde ist belanglos."""
+    """The room of a cancelled lesson is irrelevant."""
     cal = Calendar.from_ical(events_to_ics([ev(status="cancelled", room="R101")]))
     vev = cal.walk("VEVENT")[0]
     assert "R101" not in str(vev["SUMMARY"])
@@ -187,7 +187,7 @@ def test_substitution_lists_what_changed():
 
 
 def test_status_word_comes_first_for_truncation():
-    """Google kuerzt Titel in der Gitteransicht - der Zustand muss vorne stehen."""
+    """Google truncates titles in grid view - the state must come first."""
     e = ev(status="cancelled", subject_long="Ein sehr langer Fachname hier")
     su = str(Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]["SUMMARY"])
     assert su[:12].startswith("❌ Entfällt")

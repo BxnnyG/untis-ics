@@ -1,4 +1,4 @@
-"""Tests für das Feed-Verhalten und die Absicherung des Servers."""
+"""Tests for feed behaviour and the server hardening."""
 
 import logging
 import textwrap
@@ -35,7 +35,7 @@ def _client(tmp_path, monkeypatch, status_token="statusgeheim"):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(textwrap.dedent(CONFIG).format(out=out, status_token=status_token))
 
-    # Jeder echte Abruf waere hier ein Fehler -> hart abbrechen
+    # Any real fetch here is a bug -> fail loudly
     def boom(*a, **kw):
         raise AssertionError("Es wurde ein Untis-Login versucht")
 
@@ -52,8 +52,8 @@ def client(tmp_path, monkeypatch):
 
 
 def test_disabled_account_never_triggers_login(client):
-    """Sperr-Risiko: ein deaktivierter Account darf durch einen Feed-Abruf
-    keinen Login ausloesen, auch wenn die Datei veraltet ist."""
+    """Lockout risk: a disabled account must not trigger a login through a feed
+    request, even when the file is stale."""
     (client.out / "aus.ics").write_bytes(b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n")
     r = client.get("/calendar/aus.ics", params={"token": "geheim"})
     assert r.status_code == 200
@@ -61,15 +61,15 @@ def test_disabled_account_never_triggers_login(client):
 
 
 def test_disabled_without_cache_returns_503(client):
-    """Kein Login, aber auch keine Daten -> ehrlicher Fehler statt leerem Kalender."""
+    """No login, but no data either -> an honest error, not an empty calendar."""
     assert client.get("/calendar/aus.ics", params={"token": "geheim"}).status_code == 503
 
 
-# --- Absicherung ------------------------------------------------------------
+# --- Hardening --------------------------------------------------------------
 
 
 def test_wrong_token_is_indistinguishable_from_unknown_account(client):
-    """Unterschiedliche Fehler wuerden verraten, welche Account-Keys existieren."""
+    """Different errors would reveal which account keys exist."""
     falsch = client.get("/calendar/aus.ics", params={"token": "falsch"})
     unbekannt = client.get("/calendar/gibtsnicht.ics", params={"token": "falsch"})
     assert falsch.status_code == unbekannt.status_code == 404
@@ -87,8 +87,8 @@ def test_status_requires_token(client):
 
 
 def test_status_without_configured_token_stays_hidden(tmp_path, monkeypatch):
-    """Fail-closed: ohne konfigurierten Token bleibt /status verborgen,
-    statt versehentlich offen zu stehen."""
+    """Fail-closed: without a configured token /status stays hidden rather than
+    being left open by accident."""
     with _client(tmp_path, monkeypatch, status_token="") as c:
         assert c.get("/status").status_code == 404
         assert c.get("/status", params={"token": ""}).status_code == 404
@@ -101,7 +101,7 @@ def test_status_content_when_authorised(client):
 
 
 def test_health_stays_public(client):
-    """Fuer Monitoring, verraet nichts ueber Accounts."""
+    """For monitoring; reveals nothing about accounts."""
     r = client.get("/health")
     assert r.status_code == 200
     assert set(r.json()) == {"status", "time"}
@@ -121,14 +121,14 @@ def test_security_headers_present(client):
 
 
 def test_feed_is_not_publicly_cacheable(client):
-    """Tokengeschuetzte Personendaten duerfen nicht in geteilten Caches landen."""
+    """Token-gated personal data must not end up in shared caches."""
     (client.out / "aus.ics").write_bytes(b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n")
     cc = client.get("/calendar/aus.ics", params={"token": "geheim"}).headers["Cache-Control"]
     assert cc.startswith("private")
     assert "public" not in cc
 
 
-# --- Token-Vergleich und Log-Redaction --------------------------------------
+# --- Token comparison and log redaction -------------------------------------
 
 
 def test_token_matches_is_exact():
@@ -143,7 +143,7 @@ def test_no_configured_token_means_open_feed():
 
 
 def test_log_filter_redacts_token():
-    """Der Token steht zwangslaeufig im Query-String - er darf nicht ins Journal."""
+    """The token has to sit in the query string - it must not reach the journal."""
     rec = logging.LogRecord(
         "uvicorn.access",
         logging.INFO,

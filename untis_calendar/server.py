@@ -26,11 +26,11 @@ _TOKEN_IN_URL = re.compile(r"(?i)([?&](?:token|access_token)=)[^&\s\"']+")
 
 
 class RedactTokensFilter(logging.Filter):
-    """Ersetzt Tokens in Zugriffslogs durch ***.
+    """Replace tokens in access logs with ***.
 
-    Der Feed-Token steht zwangslaeufig im Query-String - Google kann ihn nicht
-    anders uebergeben. Uvicorn loggt die volle URL, damit landet jeder Token im
-    Journal und in allem, was Logs weiterreicht.
+    The feed token has to sit in the query string - Google cannot pass it any
+    other way. Uvicorn logs the full URL, so without this every token ends up
+    in the journal and in anything that ships logs onward.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -44,16 +44,16 @@ class RedactTokensFilter(logging.Filter):
 
 
 def token_matches(expected: str | None, given: str | None) -> bool:
-    """Zeitkonstanter Vergleich, damit sich der Token nicht erraten laesst."""
+    """Constant-time comparison so the token cannot be guessed by timing."""
     if not expected:
-        return True  # kein Token konfiguriert -> Feed ist offen
+        return True  # no token configured -> the feed is open
     if not given:
         return False
     return secrets.compare_digest(expected, given)
 
 
 def stale_threshold_minutes(cfg: Config) -> int:
-    """Ab welchem Alter gelten die Daten eines Accounts als veraltet."""
+    """Age at which an account's data counts as stale."""
     if cfg.server.stale_after_minutes > 0:
         return cfg.server.stale_after_minutes
     base = max(cfg.app.refresh_interval_minutes, cfg.app.refresh_idle_minutes)
@@ -61,11 +61,11 @@ def stale_threshold_minutes(cfg: Config) -> int:
 
 
 def compute_interval_minutes(app: AppConfig, now_local: datetime | None = None) -> int:
-    """Wartezeit bis zum naechsten Hintergrund-Refresh, in Minuten.
+    """Minutes to wait until the next background refresh.
 
-    Haeufig waehrend der aktiven Stunden, sonst selten - ein Stundenplan
-    aendert sich nachts nicht, und dauerhaft im gleichen Takt abzufragen
-    belastet WebUntis ohne Nutzen.
+    Often during active hours, rarely outside them - a timetable does not
+    change overnight, and polling at the same rate around the clock loads
+    WebUntis for nothing.
     """
     if app.refresh_idle_minutes <= 0:
         return app.refresh_interval_minutes
@@ -81,13 +81,13 @@ def compute_interval_minutes(app: AppConfig, now_local: datetime | None = None) 
     if start <= end:
         active = start <= hour < end
     else:
-        # Fenster ueber Mitternacht, z. B. 22 bis 6
+        # Window spanning midnight, e.g. 22 to 6
         active = hour >= start or hour < end
     return app.refresh_interval_minutes if active else app.refresh_idle_minutes
 
 
 class FeedState:
-    """Merkt sich pro Account den letzten Erfolg/Fehler für /status."""
+    """Remembers the last success/failure per account for /status."""
 
     def __init__(self) -> None:
         self.last_success: datetime | None = None
@@ -102,14 +102,14 @@ def create_app(config_path: str) -> FastAPI:
     client = UntisClient(cfg.app)
     out_dir = Path(cfg.app.output_dir)
     states: dict[str, FeedState] = {a.key: FeedState() for a in cfg.accounts}
-    # Verhindert, dass parallele Anfragen denselben Account gleichzeitig abrufen
+    # Stops concurrent requests from fetching the same account at once
     locks: dict[str, asyncio.Lock] = {a.key: asyncio.Lock() for a in cfg.accounts}
 
     def refresh_account(account: AccountConfig) -> bytes | None:
-        """Holt frische Daten und schreibt sie.
+        """Fetch fresh data and write it out.
 
-        Gibt None zurück, wenn der Abruf fehlschlug - die vorhandene Datei
-        bleibt dann unangetastet.
+        Returns None when the fetch failed - the existing file is then left
+        untouched.
         """
         state = states[account.key]
         out_file = out_dir / account.calendar.file_name
@@ -118,15 +118,15 @@ def create_app(config_path: str) -> FastAPI:
         except Exception as e:
             state.last_error = str(e)
             state.last_error_at = datetime.now(timezone.utc)
-            logger.error("Abruf für '%s' fehlgeschlagen: %s", account.key, e)
+            logger.error("Fetch for '%s' failed: %s", account.key, e)
             logger.debug("Details:", exc_info=True)
             return None
 
         if not events and out_file.exists() and out_file.stat().st_size > 200:
-            # Verdächtig: vorher gab es Daten, jetzt nichts. Nicht überschreiben.
-            state.last_error = "Leeres Ergebnis - vorhandene Datei behalten"
+            # Suspicious: there was data before and none now. Do not overwrite.
+            state.last_error = "Empty result - keeping the existing file"
             state.last_error_at = datetime.now(timezone.utc)
-            logger.warning("Leeres Ergebnis für '%s' - behalte %s", account.key, out_file)
+            logger.warning("Empty result for '%s' - keeping %s", account.key, out_file)
             return None
 
         ics_bytes = events_to_ics(
@@ -142,21 +142,21 @@ def create_app(config_path: str) -> FastAPI:
         state.last_success = datetime.now(timezone.utc)
         state.event_count = len(events)
         state.last_error = None
-        logger.info("Aktualisiert: %s (%d Termine)", out_file, len(events))
+        logger.info("Updated: %s (%d events)", out_file, len(events))
         return ics_bytes
 
     def healthy() -> tuple[bool, list[str]]:
-        """Haben alle aktiven Accounts frische Daten?"""
+        """Does every enabled account have fresh data?"""
         limit = timedelta(minutes=stale_threshold_minutes(cfg))
         now = datetime.now(timezone.utc)
         problems = []
         for account in cfg.active_accounts:
             st = states[account.key]
             if st.last_success is None:
-                problems.append(f"{account.key}: noch kein erfolgreicher Abruf")
+                problems.append(f"{account.key}: no successful fetch yet")
             elif now - st.last_success > limit:
                 age = int((now - st.last_success).total_seconds() // 60)
-                problems.append(f"{account.key}: letzter Erfolg vor {age} Min")
+                problems.append(f"{account.key}: last success {age} min ago")
         return not problems, problems
 
     async def refresh_loop() -> None:
@@ -165,19 +165,19 @@ def create_app(config_path: str) -> FastAPI:
                 try:
                     await asyncio.to_thread(refresh_account, account)
                 except Exception:
-                    logger.exception("Unerwarteter Fehler im Refresh von '%s'", account.key)
+                    logger.exception("Unexpected error refreshing '%s'", account.key)
 
             url = cfg.server.heartbeat
             if url:
                 ok, problems = healthy()
                 if not ok:
-                    logger.warning("Heartbeat meldet Probleme: %s", "; ".join(problems))
+                    logger.warning("Heartbeat reporting problems: %s", "; ".join(problems))
                 await asyncio.to_thread(
-                    heartbeat.send, url, ok, 10, "; ".join(problems) or "alle Accounts aktuell"
+                    heartbeat.send, url, ok, 10, "; ".join(problems) or "all accounts up to date"
                 )
 
             minutes = compute_interval_minutes(cfg.app)
-            logger.debug("Naechster Refresh in %d Minuten", minutes)
+            logger.debug("Next refresh in %d minutes", minutes)
             await asyncio.sleep(minutes * 60)
 
     @asynccontextmanager
@@ -186,8 +186,8 @@ def create_app(config_path: str) -> FastAPI:
         if cfg.app.refresh_interval_minutes > 0:
             task = asyncio.create_task(refresh_loop())
             logger.info(
-                "Hintergrund-Refresh aktiv: alle %d Min zwischen %02d:00 und %02d:00, "
-                "sonst alle %d Min",
+                "Background refresh active: every %d min between %02d:00 and %02d:00, "
+                "otherwise every %d min",
                 cfg.app.refresh_interval_minutes,
                 cfg.app.active_hours_start,
                 cfg.app.active_hours_end,
@@ -204,9 +204,8 @@ def create_app(config_path: str) -> FastAPI:
         for name in ("uvicorn.access", "uvicorn.error", "uvicorn"):
             logging.getLogger(name).addFilter(flt)
 
-    # Ohne docs_enabled keine /docs, /redoc und /openapi.json ausliefern:
-    # der Dienst ist oeffentlich erreichbar und die Doku beschreibt nur,
-    # wie man ihn angreift.
+    # Without docs_enabled, do not serve /docs, /redoc and /openapi.json: the
+    # service is publicly reachable and the docs only describe how to attack it.
     docs = cfg.server.docs_enabled
     app = FastAPI(
         title="Untis → ICS",
@@ -222,8 +221,8 @@ def create_app(config_path: str) -> FastAPI:
         if cfg.server.security_headers:
             response.headers.setdefault("X-Content-Type-Options", "nosniff")
             response.headers.setdefault("X-Frame-Options", "DENY")
-            # Verhindert, dass der Token ueber den Referer abfliesst, wenn
-            # jemand die Feed-URL im Browser oeffnet.
+            # Stops the token leaking through the referrer when someone opens
+            # a feed URL in a browser.
             response.headers.setdefault("Referrer-Policy", "no-referrer")
             response.headers.setdefault(
                 "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
@@ -236,11 +235,11 @@ def create_app(config_path: str) -> FastAPI:
 
     @app.get("/status")
     def status(token: str | None = None):
-        """Übersicht pro Account - zeigt sofort, wenn ein Feed klemmt.
+        """Per-account overview - shows immediately when a feed is stuck.
 
-        Verraet Account-Keys, Schulen und Fehlertexte und ist deshalb
-        tokenpflichtig. Ohne konfigurierten Token bleibt der Endpunkt
-        verborgen, statt versehentlich offen zu stehen.
+        Exposes account keys, schools and error text, so it requires a token.
+        Without one configured the endpoint stays hidden rather than being
+        left open by accident.
         """
         expected = cfg.server.status_secret
         if not expected or not token_matches(expected, token):
@@ -275,12 +274,12 @@ def create_app(config_path: str) -> FastAPI:
         return out
 
     def _is_stale(out_file) -> bool:
-        """Muss auf Anfrage frisch geholt werden?
+        """Does this request need a fresh fetch?
 
-        Bei aktivem Hintergrund-Refresh beantwortet der Server Anfragen
-        grundsaetzlich aus der Datei - das haelt die Antwortzeiten kurz und
-        erzeugt keine Last pro Abruf. Live geholt wird nur, wenn noch nichts
-        vorliegt oder der Hintergrund-Refresh offensichtlich haengt.
+        With background refresh enabled the server always answers from the
+        file, which keeps responses fast and creates no load per request. A
+        live fetch only happens when nothing exists yet or the background task
+        has clearly stalled.
         """
         if not out_file.exists():
             return True
@@ -299,45 +298,44 @@ def create_app(config_path: str) -> FastAPI:
     async def get_calendar(account_key: str, request: Request, token: str | None = None):
         account = next((a for a in cfg.accounts if a.key == account_key), None)
 
-        # Unbekannter Account und falscher Token liefern bewusst dieselbe
-        # Antwort. Unterschiedliche Fehler wuerden verraten, welche
-        # Account-Keys existieren.
+        # An unknown account and a wrong token deliberately return the same
+        # response. Different errors would reveal which account keys exist.
         if account is None or (
             account.calendar.web_feed and not token_matches(account.calendar.feed_token, token)
         ):
             if account is None:
-                logger.info("Feed-Abruf für unbekannten Account '%s'", account_key)
+                logger.info("Feed request for unknown account '%s'", account_key)
             else:
-                logger.warning("Feed-Abruf mit falschem Token für '%s'", account_key)
+                logger.warning("Feed request with wrong token for '%s'", account_key)
             raise HTTPException(404, detail="Not Found")
 
         out_file = out_dir / account.calendar.file_name
 
-        # Deaktivierte Accounts nie live abrufen: sonst loest jeder Abruf
-        # (z. B. von Google) einen Login-Versuch aus - bei abgelaufenem
-        # Passwort ein Sperr-Risiko.
+        # Never fetch live for disabled accounts: otherwise every request
+        # (Google included) triggers a login attempt, which risks locking the
+        # account when the password has expired.
         stale = account.enabled and _is_stale(out_file)
 
         ics_bytes: bytes | None = None
         if stale:
             async with locks[account.key]:
-                # Zweite Pruefung: waehrend des Wartens kann ein anderer
-                # Request (oder der Hintergrund-Refresh) schon fertig sein.
+                # Check again: while waiting, another request or the
+                # background refresh may already have finished.
                 if _is_stale(out_file):
                     ics_bytes = await asyncio.to_thread(refresh_account, account)
 
         if ics_bytes is None:
-            # Frischer Abruf nicht möglich (oder nicht nötig) -> letzten guten Stand liefern
+            # No fresh fetch possible (or needed) -> serve the last good state
             if not out_file.exists():
                 raise HTTPException(
                     503,
-                    detail="Kalender konnte nicht erzeugt werden und es liegt "
-                    "kein zwischengespeicherter Stand vor.",
+                    detail="Calendar could not be generated and no cached "
+                    "version is available.",
                 )
             ics_bytes = out_file.read_bytes()
 
-        # "private": der Feed haengt an einem Token und enthaelt
-        # personenbezogene Daten - geteilte Caches duerfen ihn nicht halten.
+        # "private": the feed is token-gated and holds personal data, so
+        # shared caches must not retain it.
         headers = {"Cache-Control": f"private, max-age={cfg.app.cache_ttl_seconds}"}
         if cfg.server.etag:
             etag = '"' + hashlib.md5(ics_bytes).hexdigest() + '"'  # nosec - nur ETag

@@ -1,4 +1,4 @@
-"""Direkte WebUntis JSON-RPC Implementierung."""
+"""Direct WebUntis JSON-RPC client."""
 
 from __future__ import annotations
 
@@ -17,24 +17,24 @@ logger = logging.getLogger(__name__)
 
 
 class UntisError(RuntimeError):
-    """Basisfehler für WebUntis-Probleme."""
+    """Base error for WebUntis problems."""
 
 
 class UntisAuthError(UntisError):
-    """Login abgelehnt (falscher Benutzer/Passwort oder gesperrt)."""
+    """Login rejected (wrong user/password, or locked)."""
 
 
 class UntisEndpointError(UntisError):
-    """Der JSON-RPC-Endpunkt existiert auf diesem Server nicht (falscher Server/Schule)."""
+    """The JSON-RPC endpoint does not exist here (wrong server or school)."""
 
 
-# WebUntis-Fehlercodes
+# WebUntis error codes
 ERR_BAD_CREDENTIALS = -8504
 ERR_NOT_AUTHENTICATED = -8520
 
 
 class DirectUntisSession:
-    """Direkte JSON-RPC Implementierung ohne webuntis-Bibliothek."""
+    """Direct JSON-RPC implementation, without the webuntis library."""
 
     def __init__(
         self,
@@ -89,8 +89,8 @@ class DirectUntisSession:
             r = self.session.post(
                 self.url, json=payload, headers=headers, verify=self.verify_ssl, timeout=30
             )
-            # 5xx/429 in with_retry sichtbar machen; 4xx bleibt unberuehrt,
-            # damit ein abgelehnter Login nicht wiederholt wird.
+            # Surface 5xx/429 to with_retry; 4xx is left alone so a rejected
+            # login is never retried.
             if r.status_code in (429, 500, 502, 503, 504):
                 r.raise_for_status()
             return r
@@ -99,23 +99,23 @@ class DirectUntisSession:
 
         if resp.status_code == 404:
             raise UntisEndpointError(
-                f"JSON-RPC-Endpunkt nicht gefunden: {self.url} "
-                f"(Server oder Schulname stimmt nicht mehr)"
+                f"JSON-RPC endpoint not found: {self.url} "
+                f"(server or school name is no longer correct)"
             )
         resp.raise_for_status()
 
         try:
             data = resp.json()
         except ValueError as e:
-            raise UntisError(f"Ungültige Antwort von {self.url}: {resp.text[:200]}") from e
+            raise UntisError(f"Invalid response from {self.url}: {resp.text[:200]}") from e
 
         if "error" in data:
             err = data["error"] or {}
             code = err.get("code")
-            msg = err.get("message", "unbekannt")
+            msg = err.get("message", "unknown")
             if code == ERR_BAD_CREDENTIALS:
                 raise UntisAuthError(
-                    f"Login abgelehnt für '{self.username}' an Schule '{self.school}': {msg}"
+                    f"Login rejected for '{self.username}' at school '{self.school}': {msg}"
                 )
             raise UntisError(f"WebUntis API Error ({code}): {msg}")
 
@@ -135,17 +135,17 @@ class DirectUntisSession:
                 },
             )
         except UntisEndpointError:
-            # Schule vermutlich auf einen anderen Server umgezogen -> einmalig neu auflösen
+            # The school has probably moved servers -> resolve once and retry
             if not self.auto_resolve:
                 raise
             new_server = resolve_server(self.school)
             if not new_server or self._normalize(new_server) == self.server:
                 raise
             logger.warning(
-                "Server für '%s' umgezogen: %s -> %s", self.school, self.server, new_server
+                "Server for '%s' moved: %s -> %s", self.school, self.server, new_server
             )
             self.server = self._normalize(new_server)
-            self.auto_resolve = False  # nur ein Retry
+            self.auto_resolve = False  # one retry only
             result = self._rpc_request(
                 "authenticate",
                 {
@@ -156,14 +156,14 @@ class DirectUntisSession:
             )
 
         if not isinstance(result, dict) or not result.get("sessionId"):
-            raise UntisAuthError(f"Login für '{self.username}' lieferte keine Session: {result}")
+            raise UntisAuthError(f"Login for '{self.username}' returned no session: {result}")
 
         self.session_id = result.get("sessionId")
         self.person_type = result.get("personType")
         self.person_id = result.get("personId")
         self.klasse_id = result.get("klasseId")
         logger.info(
-            "Login erfolgreich: %s @ %s (Type: %s, ID: %s)",
+            "Login successful: %s @ %s (type: %s, id: %s)",
             self.username,
             self.school,
             self.person_type,
@@ -176,12 +176,12 @@ class DirectUntisSession:
             try:
                 self._rpc_request("logout", {})
             except Exception as e:
-                logger.debug("Logout ignoriert: %s", e)
+                logger.debug("Logout ignored: %s", e)
             finally:
                 self.session_id = None
 
     def timetable(self, start: date, end: date, element: dict[str, Any] | None = None) -> list:
-        """Stundenplan abrufen."""
+        """Fetch the timetable."""
         options: dict[str, Any] = {
             "startDate": start.strftime("%Y%m%d"),
             "endDate": end.strftime("%Y%m%d"),
@@ -201,24 +201,24 @@ class DirectUntisSession:
             options["element"] = {"id": self.person_id, "type": self.person_type}
         else:
             raise UntisError(
-                "Kein Element für den Stundenplan-Abruf bestimmbar "
-                "(weder konfiguriert noch aus dem Login ableitbar)."
+                "Cannot determine which element to fetch the timetable for "
+                "(neither configured nor derivable from the login)."
             )
 
         result = self._rpc_request("getTimetable", {"options": options})
         return result if isinstance(result, list) else []
 
     def timegrid(self) -> dict[int, str]:
-        """Stundenraster: Startzeit (HHMM) -> Name der Stunde ("1", "2", ...).
+        """Timegrid: start time (HHMM) -> period name ("1", "2", ...).
 
-        Untis liefert das Raster pro Wochentag. Die Zeiten sind in aller Regel
-        identisch; bei Abweichungen gewinnt der erste Tag, der eine Zeit
-        definiert - fuer eine Beschriftung reicht das.
+        Untis returns the grid per weekday. The times are usually identical;
+        where they differ, the first day defining a time wins - good enough
+        for a label.
         """
         try:
             days = self._rpc_request("getTimegridUnits", {})
         except UntisError as e:
-            logger.warning("Stundenraster nicht abrufbar: %s", e)
+            logger.warning("Timegrid not available: %s", e)
             return {}
 
         grid: dict[int, str] = {}
@@ -235,7 +235,7 @@ class DirectUntisSession:
 def direct_untis_login(
     server: str, school: str, username: str, password: str, verify_ssl: bool = True
 ) -> Iterator[DirectUntisSession]:
-    """Context-Manager für direkte WebUntis-Session."""
+    """Context manager for a direct WebUntis session."""
     session = DirectUntisSession(server, school, username, password, verify_ssl)
     try:
         session.login()

@@ -9,20 +9,20 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
-# Root-only Secrets-Datei; systemd reicht die Werte per EnvironmentFile weiter.
+# Root-only secrets file; systemd passes the values on via EnvironmentFile.
 SECRETS_FILE = "/etc/untis-sync.env"
 
-# Praefix fuer Umgebungsvariablen, die Werte aus der config.yaml ueberschreiben.
+# Prefix for environment variables that override values from config.yaml.
 # UNTIS_APP_TIMEZONE -> app.timezone, UNTIS_SERVER_DOCS_ENABLED -> server.docs_enabled.
-# Gedacht fuer Container, wo man nicht fuer jede Kleinigkeit eine Datei mounten will.
+# Meant for containers, where mounting a file for every little setting is a chore.
 ENV_PREFIX = "UNTIS_"
 
 
 def _apply_env_overrides(data: dict) -> list[str]:
-    """Ueberschreibt app.* und server.* aus der Umgebung.
+    """Override app.* and server.* from the environment.
 
-    Gibt die angewandten Schluessel zurueck, damit der Aufrufer sie loggen
-    kann - stillschweigend veraenderte Konfiguration ist schwer zu debuggen.
+    Returns the keys that were applied so the caller can log them - silently
+    altered configuration is miserable to debug.
     """
     applied: list[str] = []
     for section, model in (("app", AppConfig), ("server", ServerConfig)):
@@ -32,8 +32,8 @@ def _apply_env_overrides(data: dict) -> list[str]:
             if raw is None:
                 continue
             data.setdefault(section, {})
-            # Die Typkonvertierung uebernimmt pydantic bei der Validierung;
-            # bei bool waere "false" allerdings wahr, das faengt pydantic ab.
+            # pydantic handles the type conversion during validation; for
+            # bools a bare "false" would be truthy, which pydantic catches.
             data[section][field] = raw
             applied.append(f"{env_name} -> {section}.{field}")
     return applied
@@ -47,14 +47,14 @@ class ElementConfig(BaseModel):
 
 class CalendarConfig(BaseModel):
     file_name: str
-    display_name: str | None = None  # Kalendername in Google/Apple
+    display_name: str | None = None  # calendar name in Google/Apple
     web_feed: bool = True
-    token: str | None = None  # Direkt in YAML
-    token_env: str | None = None  # Fallback: aus ENV
+    token: str | None = None  # straight from YAML
+    token_env: str | None = None  # fallback: from the environment
 
     @property
     def feed_token(self) -> str | None:
-        """Token für Feed-Auth: erst YAML, dann ENV."""
+        """Feed auth token: YAML first, then the environment."""
         return self.token or (os.getenv(self.token_env) if self.token_env else None)
 
 
@@ -67,29 +67,29 @@ class AccountConfig(BaseModel):
     key: str
     school: str
     username: str
-    password: str | None = None  # Direkt in YAML
-    password_env: str | None = None  # Fallback: aus ENV
-    # Optional: leer lassen, dann wird der Server automatisch aufgelöst
+    password: str | None = None  # straight from YAML
+    password_env: str | None = None  # fallback: from the environment
+    # Optional: leave empty and the server is resolved automatically
     server: str | None = None
     verify_ssl: bool = True
     enabled: bool = True
-    include_cancelled: bool = True  # Entfallene Stunden als CANCELLED mitliefern
+    include_cancelled: bool = True  # keep cancelled lessons in the feed
     element: ElementConfig | None = None
     filters: FiltersConfig = Field(default_factory=FiltersConfig)
     color_map: dict[str, str] = Field(default_factory=dict)
     calendar: CalendarConfig
 
     def get_password(self) -> str:
-        """Passwort: erst YAML, dann ENV, sonst Error."""
+        """Password: YAML first, then the environment, otherwise an error."""
         if self.password:
             return self.password
         if self.password_env:
             val = os.getenv(self.password_env)
             if val:
                 return val
-            raise ValueError(f"ENV {self.password_env} nicht gesetzt")
+            raise ValueError(f"Environment variable {self.password_env} is not set")
         raise ValueError(
-            f"Kein Passwort für Account '{self.key}' (weder 'password' noch 'password_env')"
+            f"No password for account '{self.key}' (neither 'password' nor 'password_env')"
         )
 
 
@@ -100,46 +100,45 @@ class AppConfig(BaseModel):
     cache_ttl_seconds: int = 600
     output_dir: str = "./out"
     mode: str = "cli"
-    merge_consecutive: bool = True  # Doppelstunden zu einem Termin zusammenfassen
-    subject_style: str = "long"  # long | short | both - Fach in der Terminueberschrift
-    fetch_online_info: bool = True  # Online-Unterricht/Meeting-Links per REST nachladen
-    use_untis_colors: bool = True  # Fachfarben aus Untis in den Kalender uebernehmen
-    show_period_numbers: bool = True  # "3. Stunde" in der Beschreibung ausweisen
-    cancelled_style: str = "mark"  # mark | status | hide - siehe README
-    # Hintergrund-Aktualisierung im Server-Modus (0 = aus).
-    # Waehrend der aktiven Stunden wird haeufig, sonst selten abgerufen -
-    # ein Stundenplan aendert sich nachts nicht.
+    merge_consecutive: bool = True  # collapse double periods into one event
+    subject_style: str = "long"  # long | short | both - subject in the title
+    fetch_online_info: bool = True  # load online lessons/meeting links via REST
+    use_untis_colors: bool = True  # carry the school's subject colours over
+    show_period_numbers: bool = True  # add "3. Stunde" to the description
+    cancelled_style: str = "mark"  # mark | status | hide - see README
+    # Background refresh in server mode (0 = off). Often during active hours,
+    # rarely outside them - a timetable does not change overnight.
     refresh_interval_minutes: int = 15
     refresh_idle_minutes: int = 120
-    active_hours_start: int = 6  # lokale Stunde, ab der haeufig geprueft wird
-    active_hours_end: int = 22  # lokale Stunde, ab der wieder selten geprueft wird
+    active_hours_start: int = 6  # local hour when frequent checks start
+    active_hours_end: int = 22  # local hour when they drop back to rare
 
     @field_validator("active_hours_start", "active_hours_end")
     @classmethod
     def valid_hour(cls, v: int) -> int:
         if not 0 <= v <= 23:
-            raise ValueError("Stunde muss zwischen 0 und 23 liegen")
+            raise ValueError("Hour must be between 0 and 23")
         return v
 
     @field_validator("cancelled_style")
     @classmethod
     def valid_cancelled_style(cls, v: str) -> str:
         if v not in ("mark", "status", "hide"):
-            raise ValueError("cancelled_style muss 'mark', 'status' oder 'hide' sein")
+            raise ValueError("cancelled_style must be 'mark', 'status' or 'hide'")
         return v
 
     @field_validator("subject_style")
     @classmethod
     def valid_subject_style(cls, v: str) -> str:
         if v not in ("long", "short", "both"):
-            raise ValueError("subject_style muss 'long', 'short' oder 'both' sein")
+            raise ValueError("subject_style must be 'long', 'short' or 'both'")
         return v
 
     @field_validator("mode")
     @classmethod
     def valid_mode(cls, v: str) -> str:
         if v not in ("cli", "server"):
-            raise ValueError("mode muss 'cli' oder 'server' sein")
+            raise ValueError("mode must be 'cli' or 'server'")
         return v
 
 
@@ -147,28 +146,27 @@ class ServerConfig(BaseModel):
     etag: bool = True
     last_modified: bool = True
 
-    # Interaktive API-Doku (/docs, /redoc, /openapi.json). Standardmaessig aus:
-    # der Dienst steht oeffentlich und die Doku verraet nur die Angriffsflaeche.
+    # Interactive API docs (/docs, /redoc, /openapi.json). Off by default: the
+    # service is publicly reachable and the docs only map the attack surface.
     docs_enabled: bool = False
 
-    # /status verraet Account-Keys, Schulen und Fehlertexte und ist deshalb
-    # tokenpflichtig. Ohne gesetzten Token antwortet der Endpunkt mit 404.
+    # /status exposes account keys, schools and error text, so it needs a
+    # token. Without one the endpoint answers 404.
     status_token: str | None = None
     status_token_env: str | None = None
 
-    # X-Content-Type-Options, Referrer-Policy usw. an jede Antwort haengen
+    # Attach X-Content-Type-Options, Referrer-Policy etc. to every response
     security_headers: bool = True
 
-    # Token aus den Zugriffslogs entfernen (sie landen sonst im Journal)
+    # Strip tokens from access logs (they end up in the journal otherwise)
     redact_tokens_in_logs: bool = True
 
-    # Lebenszeichen an einen externen Ueberwachungsdienst (Healthchecks.io,
-    # Uptime Kuma o. ae.). Gepingt wird nur, wenn alle aktiven Accounts
-    # frische Daten haben - bleibt der Ping aus, schlaegt dort der Alarm an.
+    # Liveness ping to an external monitor (Healthchecks.io, Uptime Kuma and
+    # the like). Only sent when every enabled account has fresh data - if it
+    # stops, the monitor raises the alarm.
     heartbeat_url: str | None = None
     heartbeat_url_env: str | None = None
-    # Ab welchem Alter Daten als veraltet gelten. 0 = das Dreifache des
-    # Refresh-Intervalls verwenden.
+    # Age at which data counts as stale. 0 = three times the refresh interval.
     stale_after_minutes: int = 0
 
     @property
@@ -194,15 +192,15 @@ class Config(BaseModel):
         keys = [a.key for a in self.accounts]
         dupes = {k for k in keys if keys.count(k) > 1}
         if dupes:
-            raise ValueError(f"Doppelte Account-Keys in der Config: {sorted(dupes)}")
+            raise ValueError(f"Duplicate account keys in the config: {sorted(dupes)}")
 
         files = [a.calendar.file_name for a in self.accounts]
         dupe_files = {f for f in files if files.count(f) > 1}
         if dupe_files:
-            raise ValueError(f"Mehrere Accounts schreiben in dieselbe Datei: {sorted(dupe_files)}")
+            raise ValueError(f"Several accounts write to the same file: {sorted(dupe_files)}")
 
-        # Gleiche Tokens sind kein harter Fehler, aber ein Sicherheitsproblem:
-        # wer einen Feed kennt, kann alle anderen mitlesen.
+        # Identical tokens are not a hard error but they are a security
+        # problem: whoever knows one feed can read all the others.
         tokens = [
             a.calendar.feed_token
             for a in self.accounts
@@ -211,8 +209,8 @@ class Config(BaseModel):
         shared = {t for t in tokens if tokens.count(t) > 1}
         if shared:
             logger.warning(
-                "Mehrere Accounts nutzen denselben Feed-Token - bitte pro Account "
-                "einen eigenen Token vergeben."
+                "Several accounts share the same feed token - please give each "
+                "account its own."
             )
         return self
 
@@ -224,12 +222,11 @@ class Config(BaseModel):
     def load(cls, path: str | Path) -> Config:
         p = Path(path)
         if not p.exists():
-            raise FileNotFoundError(f"Config-Datei nicht gefunden: {p}")
+            raise FileNotFoundError(f"Config file not found: {p}")
 
-        # Secrets laden, damit password_env/token_env auch bei manuellen
-        # CLI-Aufrufen funktionieren. Im Dienst-Betrieb liefert systemd die
-        # Werte bereits per EnvironmentFile - bestehende Variablen werden
-        # deshalb nicht ueberschrieben.
+        # Load secrets so password_env/token_env also work for manual CLI
+        # runs. Under systemd the values already come from EnvironmentFile, so
+        # existing variables are never overwritten.
         for env_file in (Path(SECRETS_FILE), p.parent / ".env"):
             try:
                 if not env_file.exists():
@@ -237,19 +234,19 @@ class Config(BaseModel):
                 from dotenv import load_dotenv
 
                 load_dotenv(env_file, override=False)
-                logger.debug("Secrets geladen aus %s", env_file)
+                logger.debug("Secrets loaded from %s", env_file)
             except PermissionError:
-                # /etc/untis-sync.env ist root-only - als www-data erwartbar
-                logger.debug("Keine Leseberechtigung fuer %s", env_file)
+                # The secrets file is root-only; unreadable as the service user
+                logger.debug("No read permission for %s", env_file)
             except ImportError:
                 break
 
         data = yaml.safe_load(p.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError(f"Config ist leer oder kein YAML-Mapping: {p}")
+            raise ValueError(f"Config is empty or not a YAML mapping: {p}")
 
         for note in _apply_env_overrides(data):
-            logger.info("Konfiguration aus Umgebung: %s", note)
+            logger.info("Configuration from environment: %s", note)
 
         cfg = cls.model_validate(data)
         Path(cfg.app.output_dir).mkdir(parents=True, exist_ok=True)

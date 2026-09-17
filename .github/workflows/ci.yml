@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lowest and highest supported versions. 3.9 matters because the
+        # project claims to support it and has already been broken on it once.
+        python-version: ["3.9", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Import check
+        # Catches annotations that only evaluate at import time.
+        run: python -c "import untis_calendar.__main__"
+
+      - name: Test
+        run: pytest
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install ruff
+      - run: ruff check --output-format=github .
+      - run: ruff format --check .
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: untis-ics:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuse to ship real configuration
+        # These must never be tracked; they hold credentials or complete
+        # timetables including teacher names.
+        run: |
+          set -e
+          if git ls-files --error-unmatch config.yaml .env 2>/dev/null; then
+            echo "::error::config.yaml or .env is tracked"
+            exit 1
+          fi
+          if git ls-files | grep -E '\.ics$'; then
+            echo "::error::generated calendars are tracked"
+            exit 1
+          fi
+          echo "clean"

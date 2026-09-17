@@ -1,4 +1,4 @@
-"""Tests gegen das reale WebUntis-JSON-RPC-Format (getTimetable)."""
+"""Tests against the real WebUntis JSON-RPC payload (getTimetable)."""
 
 import pytest
 from pydantic import ValidationError
@@ -52,7 +52,7 @@ def test_maps_real_untis_payload(client):
 
 
 def test_hhmm_times_are_not_treated_as_minutes(client):
-    """1445 muss 14:45 sein, nicht 24h+ nach Mitternacht."""
+    """1445 must mean 14:45, not 24h+ past midnight."""
     ev = client._map_raw_to_event(raw(startTime=1445, endTime=1530), make_account())
     assert (ev.start.hour, ev.start.minute) == (14, 45)
     assert (ev.end.hour, ev.end.minute) == (15, 30)
@@ -64,8 +64,8 @@ def test_cancelled_and_substitution_status(client):
 
 
 def test_uid_is_stable_across_room_change(client):
-    """Gleiche Untis-ID -> gleiche UID, damit Google den Termin aktualisiert
-    statt einen zweiten anzulegen."""
+    """Same Untis id -> same UID, so Google updates the event instead of
+    creating a second one."""
     a = make_account()
     u1 = client._map_raw_to_event(raw(), a).uid
     u2 = client._map_raw_to_event(
@@ -123,7 +123,7 @@ def test_element_kwargs_uses_numeric_type(client):
 
 
 def test_element_without_id_is_ignored(client):
-    """Die JSON-RPC-API kann mit einem Namen nichts anfangen."""
+    """The JSON-RPC API cannot do anything with a name."""
     a = make_account(element={"type": "class", "name": "10A"})
     assert client._element_kwargs(a) is None
 
@@ -184,7 +184,7 @@ def test_duplicate_account_keys_rejected():
         )
 
 
-# --- Klarnamen (longname) --------------------------------------------------
+# --- Full names (longname) --------------------------------------------------
 
 
 def test_long_names_are_extracted(client):
@@ -202,7 +202,7 @@ def test_subject_display_styles(client):
 
 
 def test_display_falls_back_when_no_longname(client):
-    """Untis liefert longname nicht immer - dann muss das Kuerzel greifen."""
+    """Untis does not always send longname - the abbreviation must take over."""
     ev = client._map_raw_to_event(
         raw(su=[{"id": 1, "name": "XY"}], te=[{"id": 2, "name": "AB"}]), make_account()
     )
@@ -222,7 +222,7 @@ def test_invalid_subject_style_rejected():
         AppConfig(subject_style="bunt")
 
 
-# --- Online-Unterricht aus der REST-Anreicherung -----------------------------
+# --- Online lessons from the REST enrichment --------------------------------
 
 
 def test_extras_are_applied(client):
@@ -257,7 +257,7 @@ def test_merge_does_not_mix_online_and_presence(client):
     assert len(client._merge_consecutive(evs)) == 2
 
 
-# --- Verlegte Stunden --------------------------------------------------------
+# --- Rescheduled lessons ----------------------------------------------------
 
 
 def _extras_moved_from(slot):
@@ -278,8 +278,8 @@ def test_shift_sets_status_moved(client):
 
 
 def test_cancelled_source_gets_linked_to_new_slot(client):
-    """Die REST-Ansicht liefert entfallene Stunden nicht mit; die Gegen-
-    richtung muss aus der verlegten Stunde ergaenzt werden."""
+    """The REST view omits cancelled lessons; the reverse direction has to be
+    filled in from the moved lesson."""
     a = make_account()
     cancelled = client._map_raw_to_event(
         raw(id=1, date=20260922, startTime=1700, endTime=1745, code="cancelled"), a

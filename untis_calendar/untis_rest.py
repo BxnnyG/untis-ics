@@ -1,4 +1,4 @@
-"""Anreicherung der Stundenplandaten über die neuere WebUntis-REST-API.
+"""Enrich timetable data through the newer WebUntis REST view.
 
 Die alte JSON-RPC-Schnittstelle (untis_direct.py) liefert weder Online-
 Unterricht noch Stundentexte. Die REST-Ansicht, die auch das Web-Frontend
@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 
 URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 
-# Platzhalter, die WebUntis statt einer echten URL liefert
+# Placeholders WebUntis returns instead of a real URL
 PLACEHOLDER_URLS = {"", "0", "-", "null", "none"}
 
-# WebUntis-Elementtypen in der REST-Ansicht
+# WebUntis element types in the REST view
 ELEMENT_LABELS = {1: "Klasse", 2: "Lehrer", 3: "Fach", 4: "Raum"}
 
 
@@ -51,14 +51,14 @@ class LessonExtras:
         self.online: bool = False
         self.meeting_url: str | None = None
         self.texts: list[str] = []
-        # Zustand der Stunde laut REST-Ansicht: STANDARD, SHIFT, CANCEL, ...
+        # Lesson state per the REST view: STANDARD, SHIFT, CANCEL, ...
         self.cell_state: str | None = None
-        # Verlegung: (datum, HHMM) - woher die Stunde kommt bzw. wohin sie geht
+        # Reschedule: (date, HHMM) - where the lesson comes from or goes to
         self.moved_from: tuple | None = None
         self.moved_to: tuple | None = None
-        # Vertretungen als (Art, vorher, nachher), z. B. ("Lehrer", "VS", "MY")
+        # Substitutions as (kind, before, after), e.g. ("Lehrer", "VS", "MY")
         self.substitutions: list[tuple] = []
-        # Fachfarbe aus Untis als Hex, z. B. "#80ffff"
+        # Subject colour from Untis as hex, e.g. "#80ffff"
         self.color: str | None = None
 
     def __repr__(self) -> str:  # pragma: no cover - nur Debug
@@ -70,7 +70,7 @@ class LessonExtras:
 
 
 def _clean_url(raw: Any) -> str | None:
-    """Gibt nur echte http(s)-Links zurueck, keine Platzhalter wie '0'."""
+    """Return only real http(s) links, never placeholders like '0'."""
     if not raw:
         return None
     s = str(raw).strip()
@@ -82,7 +82,7 @@ def _clean_url(raw: Any) -> str | None:
 
 
 def _find_url_in_text(*texts: Any) -> str | None:
-    """Viele Lehrkraefte kleben den Meeting-Link einfach in den Stundentext."""
+    """Many teachers simply paste the meeting link into the lesson text."""
     for t in texts:
         if not t:
             continue
@@ -125,7 +125,7 @@ class UntisRestSession:
         )
         resp.raise_for_status()
         if "JSESSIONID" not in self.session.cookies:
-            raise RuntimeError("REST-Login lieferte keine Session")
+            raise RuntimeError("REST login returned no session")
         return self
 
     def logout(self) -> None:
@@ -134,7 +134,7 @@ class UntisRestSession:
                 f"{self.server}/WebUntis/saml/logout", verify=self.verify_ssl, timeout=self.timeout
             )
         except Exception as e:
-            logger.debug("REST-Logout ignoriert: %s", e)
+            logger.debug("REST logout ignored: %s", e)
 
     def _week_data(
         self, element_id: int, element_type: int, day: date
@@ -151,7 +151,7 @@ class UntisRestSession:
                 verify=self.verify_ssl,
                 timeout=self.timeout,
             ),
-            description="REST-Wochenabruf",
+            description="REST week fetch",
         )
         resp.raise_for_status()
         data = resp.json()
@@ -164,8 +164,8 @@ class UntisRestSession:
         if not isinstance(periods, list):
             periods = []
 
-        # Register (typ, id) -> Name, um orgId aufloesen zu koennen,
-        # plus die von der Schule vergebene Fachfarbe.
+        # Registry (type, id) -> name so orgId can be resolved, plus the
+        # subject colour the school assigned.
         names: dict[tuple, str] = {}
         colors: dict[tuple, str] = {}
         for el in res.get("elements") or []:
@@ -179,13 +179,13 @@ class UntisRestSession:
     def fetch_extras(
         self, element_id: int, element_type: int, start: date, end: date
     ) -> dict[str, LessonExtras]:
-        """Extras je Perioden-ID fuer den Zeitraum."""
+        """Extras keyed by period id for the given range."""
         out: dict[str, LessonExtras] = {}
         for monday in _mondays(start, end):
             try:
                 periods, names, colors = self._week_data(element_id, element_type, monday)
             except Exception as e:
-                logger.warning("REST-Woche %s nicht abrufbar: %s", monday, e)
+                logger.warning("REST week %s not retrievable: %s", monday, e)
                 continue
 
             for p in periods:
@@ -204,16 +204,15 @@ class UntisRestSession:
 
                 ex.cell_state = p.get("cellState")
 
-                # Fachfarbe: das Fach-Element (Typ 3) traegt die von der
-                # Schule vergebene Farbe.
+                # The subject element (type 3) carries the school's colour.
                 for el in p.get("elements") or []:
                     if el.get("type") == 3:
                         ex.color = colors.get((3, el.get("id")))
                         break
 
-                # Verlegte Stunde: rescheduleInfo zeigt auf den jeweils
-                # anderen Termin. isSource=True -> diese Stunde ist das
-                # Original und findet woanders statt.
+                # Rescheduled lesson: rescheduleInfo points at the other end.
+                # isSource=True means this is the original and it happens
+                # somewhere else.
                 ri = p.get("rescheduleInfo") or {}
                 if ri.get("date"):
                     slot = (int(ri["date"]), int(ri.get("startTime") or 0))
@@ -222,7 +221,7 @@ class UntisRestSession:
                     else:
                         ex.moved_from = slot
 
-                # Vertretungen: orgId haelt das ersetzte Element
+                # Substitutions: orgId holds the element that was replaced
                 for el in p.get("elements") or []:
                     org_id = el.get("orgId")
                     if not org_id:
@@ -246,7 +245,7 @@ class UntisRestSession:
 
 
 def _mondays(start: date, end: date) -> Iterator[date]:
-    """Jeden Wochenanfang im Zeitraum - die REST-Ansicht arbeitet wochenweise."""
+    """Every week start in the range - the REST view works week by week."""
     cur = start - timedelta(days=start.weekday())
     while cur <= end:
         yield cur
@@ -264,13 +263,13 @@ def fetch_lesson_extras(
     end: date,
     verify_ssl: bool = True,
 ) -> dict[str, LessonExtras]:
-    """Bequemer Einstieg. Wirft nicht - im Fehlerfall kommt eine leere Map."""
+    """Convenience entry point. Never raises - returns an empty map on failure."""
     sess = UntisRestSession(server, school, username, password, verify_ssl)
     try:
         sess.login()
         return sess.fetch_extras(element_id, element_type, start, end)
     except Exception as e:
-        logger.warning("REST-Anreicherung nicht verfuegbar: %s", e)
+        logger.warning("REST enrichment unavailable: %s", e)
         return {}
     finally:
         sess.logout()

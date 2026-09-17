@@ -1,278 +1,373 @@
-# Untis → ICS Tool
+# untis-ics
 
-Zweck: Stundenpläne aus WebUntis abrufen und als ICS-Feed bereitstellen
-(z. B. zum Abonnieren in Google Calendar oder Apple Kalender).
+Turn WebUntis timetables into ICS calendar feeds you can subscribe to in
+Google Calendar, Apple Calendar, Thunderbird or anything else that speaks
+iCalendar.
 
-Betriebsmodi:
-- **Server** (`serve`): FastAPI liefert pro Account einen abonnierbaren ICS-Feed
-  und aktualisiert im Hintergrund selbstständig. ← auf diesem Host aktiv
-- **CLI** (`generate`): ICS-Dateien einmalig erzeugen (für Cron)
-- **Check** (`check`): Diagnose – Schulsuche, Login und Abruf pro Account testen
+One feed per account. Cancelled lessons stay visible instead of silently
+vanishing, rescheduled lessons say where they moved to, and a failed fetch
+never wipes a working calendar.
 
-## Installation
+## Why this exists
+
+WebUntis moves schools between servers and occasionally renames their login
+names. When that happens, `/WebUntis/jsonrpc.do` starts returning **404** on
+the host you configured, every sync fails, and — depending on your tooling —
+you end up with silently empty calendars.
+
+This project resolves the responsible server at runtime through the official
+school search and retries once against the new host, so a migration does not
+break the sync. It also refuses to overwrite a good calendar with an empty
+one when a fetch fails.
+
+## Requirements
+
+- Python 3.9+
+- A WebUntis account (student, teacher or class login)
+
+## Install
 
 ```bash
+git clone https://github.com/BxnnyG/untis-ics.git
+cd untis-ics
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -U pip
-pip install -r requirements.txt
+pip install -e .
 ```
 
-## Konfiguration
+Or with Docker — see [Docker](#docker) below.
 
-`config.yaml` aus `config.example.yaml` ableiten. Wichtigste Punkte:
+## Configure
 
-- `school` ist der WebUntis-**loginName** der Schule, nicht der Klartextname
-  (z. B. `musterschule`, nicht `Muster-Berufskolleg`).
-- `server` kann leer bleiben – dann wird der zuständige Server automatisch
-  über die offizielle WebUntis-Schulsuche ermittelt.
-- Jeder Account braucht einen **eigenen** `token`. Ein geteilter Token heißt:
-  wer einen Feed kennt, kann alle lesen.
+Copy `config.example.yaml` to `config.yaml` and edit it.
 
-## Betrieb
+```yaml
+app:
+  timezone: "Europe/Berlin"
+  window_days_before: 3
+  window_days_after: 28
+  output_dir: "./out"
+
+accounts:
+  - key: "student1"           # appears in the feed URL
+    school: "myschool"        # WebUntis loginName, not the display name
+    username: "MyUser"
+    password_env: "UNTIS_PASS_STUDENT1"
+    calendar:
+      file_name: "student1.ics"
+      display_name: "My timetable"
+      web_feed: true
+      token_env: "FEED_TOKEN_STUDENT1"
+```
+
+Two things trip people up:
+
+- **`school` is the WebUntis `loginName`**, not the name on the website.
+  Find it with `untis-ics` helper:
+  ```bash
+  python find_schools.py "My School Name"
+  ```
+- **`server` is optional.** Leave it out and the correct host is resolved
+  automatically — recommended, since schools get migrated.
+
+Every setting under `app:` and `server:` can also be set from the
+environment, which is what the Docker image uses:
+
+```
+UNTIS_APP_TIMEZONE=Europe/Vienna
+UNTIS_APP_REFRESH_INTERVAL_MINUTES=10
+UNTIS_SERVER_DOCS_ENABLED=false
+```
+
+Passwords and feed tokens never belong in `config.yaml` — see
+[Security](#security).
+
+## Run
 
 ```bash
-# Accounts testen (zeigt Server, Login, erste Termine)
-python cli.py check --config config.yaml
+# Check every account: school lookup, login, first lessons
+untis-ics check --config config.yaml
 
-# nur einen Account testen
-python cli.py check --config config.yaml --only schueler1
+# Check one account (works for disabled ones too)
+untis-ics check --config config.yaml --only student1
 
-# ICS-Dateien erzeugen
-python cli.py generate --config config.yaml
+# Write the .ics files once (good for cron)
+untis-ics generate --config config.yaml
 
-# Server starten
-python cli.py serve --config config.yaml --host 0.0.0.0 --port 8080
+# Run the server (serves feeds and refreshes in the background)
+untis-ics serve --config config.yaml --host 0.0.0.0 --port 8080
 ```
 
-Auf diesem Host läuft der Server als systemd-Unit:
+`untis-ics check` is the first thing to run when something looks wrong. It
+compares the configured server against the school search and tells you
+whether the login still works.
+
+### Endpoints
+
+| Path | Purpose |
+|------|---------|
+| `/health` | Liveness. Public, reveals nothing about accounts. |
+| `/status?token=…` | Per account: last success, last error, event count, file age, plus an overall `healthy` flag. Requires `status_token_env`. |
+| `/calendar/<key>.ics?token=…` | The feed itself. |
+
+### systemd
+
+```ini
+[Unit]
+Description=untis-ics
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=untis
+WorkingDirectory=/opt/untis-ics
+EnvironmentFile=/etc/untis-ics.env
+ExecStart=/opt/untis-ics/.venv/bin/untis-ics serve --config /opt/untis-ics/config.yaml
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Docker
 
 ```bash
-systemctl status untis-calendar-sync
-systemctl restart untis-calendar-sync
-journalctl -u untis-calendar-sync -f
+cp config.example.yaml config.yaml   # edit it
+cp .env.example .env                 # add passwords and tokens
+docker compose up -d
 ```
 
-### Endpunkte
-
-| Pfad | Zweck |
-|------|-------|
-| `/health` | Lebt der Dienst? |
-| `/status?token=…` | Pro Account: letzter Erfolg, letzter Fehler, Terminanzahl, Dateialter. Braucht `status_token_env`. |
-| `/calendar/<key>.ics?token=<token>` | Der eigentliche Feed |
-
-`/status` ist die erste Anlaufstelle, wenn ein Kalender leer wirkt.
+The image runs as an unprivileged user, keeps generated feeds in a named
+volume (so a WebUntis outage right after a restart cannot leave you with an
+empty feed) and ships a healthcheck. `config.yaml` is mounted read-only;
+secrets come from the environment.
 
 ## Google Calendar
 
-Ein ICS-Feed = **ein eigener Kalender** in Google. Für drei Accounts also
-dreimal: *Andere Kalender → + → Per URL → `https://.../calendar/<key>.ics?token=...`*
+One feed is one calendar in Google: *Other calendars → + → From URL*.
 
-Zu beachten:
-- Immer die **https**-URL eintragen.
-- Google bestimmt das Abrufintervall selbst (typisch einige Stunden) und
-  ignoriert `REFRESH-INTERVAL` im Feed. Kurzfristige Vertretungen erscheinen
-  deshalb verzögert. Wer das nicht will, muss statt eines Abos direkt über
-  die Google-Calendar-API schreiben.
-- Google zeigt anfangs die URL als Kalendername. Umbenennen geht in den
-  Einstellungen des Kalenders.
-- Ändert sich ein Token, muss das Abo in Google gelöscht und neu angelegt
-  werden – eine URL lässt sich dort nicht bearbeiten.
+Things worth knowing before you file a bug:
 
-## Entfallene Stunden
+- **Use the https URL.**
+- **Google decides how often it fetches** — typically every few hours — and
+  ignores `REFRESH-INTERVAL` in the feed. A short refresh interval here keeps
+  the feed fresh; it does not make Google pull sooner. For an immediate look,
+  open the feed URL directly.
+- Google shows the URL as the calendar name at first. Rename it in the
+  calendar settings.
+- **A changed token means re-subscribing.** Google cannot edit the URL of an
+  existing subscription; you have to remove it and add it again.
 
-Google Calendar **blendet Termine mit `STATUS:CANCELLED` in abonnierten Feeds
-aus**. Wer entfallene Stunden weiterhin sehen will, darf diesen Status also
-nicht setzen. Steuerung über `app.cancelled_style`:
+## Cancelled lessons
 
-| Wert | Verhalten |
-|------|-----------|
-| `mark` (Standard) | Termin bleibt sichtbar, Titel beginnt mit `❌ Entfällt:`, `TRANSP:TRANSPARENT` – die Zeit gilt nicht mehr als belegt |
-| `status` | Setzt `STATUS:CANCELLED` (RFC-konform, aber in Google meist unsichtbar) |
-| `hide` | Entfallene Stunden kommen gar nicht erst in den Kalender |
+Google **hides events with `STATUS:CANCELLED`** in subscribed calendars. Set
+that status and the lesson disappears entirely instead of being marked. So
+by default this project does not set it:
 
-Eine echte Durchstreich-Darstellung wie in Teams kennt Google für abonnierte
-Kalender nicht – `mark` kommt dem am nächsten: der Termin steht weiter an
-seinem Platz, ist als Entfall erkennbar und blockiert die Zeit nicht mehr.
+| `app.cancelled_style` | Behaviour |
+|------------------------|-----------|
+| `mark` (default) | Event stays visible, title starts with `❌ Entfällt`, `TRANSP:TRANSPARENT` so the time no longer counts as busy |
+| `status` | Sets `STATUS:CANCELLED` (spec-correct, usually invisible in Google) |
+| `hide` | Cancelled lessons are left out entirely |
 
-Wer entfallene Stunden generell nicht will, kann sie auch pro Account über
-`include_cancelled: false` abschalten.
+There is no strikethrough rendering for subscribed calendars in Google;
+`mark` is as close as it gets. Per account, `include_cancelled: false` drops
+them regardless.
 
-### Verlegungen und Vertretungen
+### Reschedules and substitutions
 
-Verschiebt die Schule eine Stunde, entstehen in WebUntis **zwei** Einträge:
-der alte Termin gilt als entfallen, am neuen steht die Stunde. Beide werden
-gegenseitig verlinkt, sodass an jedem Termin steht, wohin er zeigt:
+When a school moves a lesson, WebUntis produces **two** entries: the old slot
+counts as cancelled, the lesson happens at the new one. Both are linked, so
+each end says where it points:
 
 ```
-Di 22.09. 17:00   ❌ Verlegt · Netzwerktechnik … → Di 15.09. 18:40
-Di 15.09. 18:40   ➡️ Netzwerktechnik … · R102
-                     Verlegt – ursprünglich Di 22.09. 17:00.
+Tue 22 Sep 17:00   ❌ Verlegt · Netzwerktechnik … → Di 15.09. 18:40
+Tue 15 Sep 18:40   ➡️ Netzwerktechnik … · R102
+                      Verlegt – ursprünglich Di 22.09. 17:00.
 ```
 
-Der Zustand steht bewusst **am Anfang** des Titels: Google kürzt Titel in der
-Monats- und Wochenansicht, und so bleibt `❌ Verlegt …` auch dann lesbar.
-Bei entfallenen Stunden wird der Raum weggelassen – er ist dann belanglos.
+The state comes first in the title on purpose: Google truncates titles in
+month and week view, and `❌ Verlegt …` has to survive that. Cancelled
+lessons drop the room — it is meaningless at that point.
 
-Ändert sich nur Lehrkraft oder Raum, steht das als `⚠️` im Titel und im
-Detail, was getauscht wurde (`Lehrer: MY statt VS`).
+If only the teacher or room changed, the title gets `⚠️` and the description
+names the swap (`Lehrer: MY statt VS`).
 
-Die Zuordnung braucht die REST-Ansicht (`fetch_online_info`). Die alte
-JSON-RPC-Schnittstelle meldet nur „irgendetwas weicht ab", ohne zu sagen was.
+This needs the REST view (`fetch_online_info`). The older JSON-RPC interface
+only reports that *something* deviates, never what.
 
-## Online-Unterricht
+## Online lessons
 
-Stunden, die in WebUntis als Online-Unterricht markiert sind, bekommen ein
-`💻` im Titel, die Kategorie `Online` und – falls hinterlegt – den
-Meeting-Link:
+Lessons flagged as online in WebUntis get `💻` in the title, the category
+`Online`, and — if one is stored — the meeting link in the `URL` property, in
+the description, and as `LOCATION` when no room is assigned.
 
-- in der `URL`-Property des Termins,
-- in der Beschreibung (dort von Google anklickbar),
-- als `LOCATION`, wenn kein Raum vergeben ist.
+Two things from practice:
 
-Diese Information liefert die alte JSON-RPC-Schnittstelle **nicht**. Sie wird
-über die REST-Ansicht nachgeladen (`app.fetch_online_info: true`) und per
-Stunden-ID zugeordnet. Schlägt das fehl, läuft der Sync ohne diese Extras
-weiter – die Stundenplandaten selbst kommen unverändert aus JSON-RPC.
+- Many schools set the online flag but store no URL (WebUntis then returns
+  the placeholder `"0"`). Such values are discarded and the event just says
+  no link is available.
+- More often the link sits in the lesson text. That text is searched too, and
+  a link found there marks the lesson as online.
 
-Zwei Einschränkungen aus der Praxis:
-- Viele Schulen setzen zwar das Online-Flag, hinterlegen aber keine URL
-  (WebUntis liefert dann den Platzhalter `"0"`). Der Termin wird dann als
-  Online gekennzeichnet, mit dem Hinweis, dass kein Link hinterlegt ist.
-- Häufiger steht der Link einfach im Stundentext. Der wird ebenfalls
-  durchsucht, und ein gefundener Link zählt als Online-Unterricht.
+## Colours
 
-## Aktualisierung
+Schools assign a colour per subject in WebUntis. Those are carried over when
+`use_untis_colors` is on.
 
-Im Serverbetrieb aktualisiert ein Hintergrund-Task die Feeds selbst. Das
-Intervall richtet sich nach der Tageszeit – ein Stundenplan ändert sich
-nachts nicht:
+RFC 7986 only allows **CSS colour names** for `COLOR`, not hex, so the
+nearest named colour is used and the exact value is attached as
+`X-APPLE-CALENDAR-COLOR`. **Google ignores both** for subscribed calendars —
+it paints the whole subscription in one colour. Apple Calendar and several
+other clients honour them.
+
+## Refresh
+
+In server mode a background task refreshes the feeds. The interval follows
+the time of day, because a timetable does not change overnight:
 
 ```yaml
-refresh_interval_minutes: 15   # innerhalb der aktiven Stunden
-refresh_idle_minutes: 120      # ausserhalb (0 = immer gleiches Intervall)
+refresh_interval_minutes: 15   # during active hours
+refresh_idle_minutes: 120      # outside (0 = always the same interval)
 active_hours_start: 6
 active_hours_end: 22
 ```
 
-Anfragen an den Feed werden dabei **immer aus der Datei** beantwortet und
-lösen keinen WebUntis-Abruf aus. Das hält die Antwortzeiten kurz und
-verhindert, dass jeder Client-Abruf Last erzeugt. Live geholt wird nur, wenn
-noch keine Datei existiert oder der Hintergrund-Task offensichtlich hängt
-(Datei älter als das Dreifache des Intervalls). Parallele Anfragen auf
-denselben Account werden über ein Lock zusammengefasst.
+Feed requests are always answered **from disk** and never trigger a WebUntis
+call, which keeps responses fast and means client polling creates no load. A
+live fetch only happens when no file exists yet or the background task
+clearly stalled. Concurrent requests for the same account are collapsed
+behind a lock.
 
-Wichtig zur Erwartung: **wie oft Google den Feed abholt, bestimmt Google.**
-Typisch sind einige Stunden, und `REFRESH-INTERVAL` im Feed wird ignoriert.
-Ein kürzeres Intervall hier macht den Feed frischer, beschleunigt aber nicht
-Googles Abruf. Wer eine Änderung sofort sehen will, ruft die Feed-URL direkt
-auf oder abonniert sie in einem Client, der selbst häufiger pollt.
+Transient network errors (connection resets, timeouts, 429, 5xx) are retried
+with growing backoff. `4xx` responses are **not** retried — repeated failed
+logins get WebUntis accounts locked.
 
-## Sicherheit
+## Monitoring
 
-**In dieses Repository gehören keine Zugangsdaten.** `config.yaml`, `.env` und
-`out/` stehen in `.gitignore` – die echte Konfiguration enthält Benutzernamen
-und Schulen, die generierten ICS-Dateien komplette Stundenpläne samt Lehrer-
-und Klassennamen.
+The service can send a heartbeat to an external monitor after each refresh
+cycle, but only when every enabled account has fresh data:
 
-Passwörter und Feed-Tokens gehören nicht in die `config.yaml`, sondern in eine
-root-only Datei, die systemd einliest:
-
-```bash
-sudo install -m 600 -o root -g root /dev/null /etc/untis-sync.env
-sudo nano /etc/untis-sync.env        # Vorlage: .env.example
+```yaml
+server:
+  heartbeat_url_env: "HEARTBEAT_URL"
+  stale_after_minutes: 0    # 0 = three times the refresh interval
 ```
 
-In der Unit:
+It is deliberately a dead man's switch. If the service hangs, crashes or a
+login stops working, the ping stops and your monitor raises the alarm — so
+this project needs no mail delivery or alerting logic of its own. Works with
+Healthchecks.io, Uptime Kuma push monitors and anything else expecting an
+HTTP call. On failure `/fail` is appended, which Healthchecks.io understands
+as an immediate failure.
+
+This matters more than it sounds: the failure mode this project was built
+around is a sync that breaks and stays broken for months because nothing
+tells you.
+
+## Security
+
+**No credentials belong in this repository.** `config.yaml`, `.env` and
+`out/` are in `.gitignore` — the real config holds usernames and schools, and
+generated `.ics` files contain complete timetables with teacher names.
+
+Put passwords and tokens in a root-owned file that systemd reads:
+
+```bash
+sudo install -m 600 -o root -g root /dev/null /etc/untis-ics.env
+sudo nano /etc/untis-ics.env        # template: .env.example
+```
 
 ```ini
 [Service]
-User=www-data
-EnvironmentFile=/etc/untis-sync.env
+User=untis
+EnvironmentFile=/etc/untis-ics.env
 ```
 
-Die `config.yaml` verweist dann nur noch auf die Variablennamen:
+systemd reads the file **as root** and passes the values to the unprivileged
+service, which cannot read the file itself. If a web server runs under the
+same user on that host, a compromised web application cannot read your
+WebUntis passwords — with plaintext in `config.yaml` it could.
 
-```yaml
-password_env: "UNTIS_PASS_SCHUELER1"
-token_env: "FEED_TOKEN_SCHUELER1"
+This is not encryption: the service must know the password to log in. It only
+limits who can read it off disk.
+
+Defaults that matter:
+
+| Setting | Effect |
+|---------|--------|
+| `docs_enabled: false` | `/docs`, `/redoc` and `/openapi.json` are not served. They describe the attack surface and the Swagger UI loads JavaScript from a third-party CDN. |
+| `status_token_env` | `/status` exposes account keys, schools and error text, so it needs a token. Without one it answers 404 — fail-closed, so it cannot be left open by accident. |
+| `security_headers: true` | `X-Content-Type-Options`, `X-Frame-Options`, a restrictive CSP and `Referrer-Policy: no-referrer`, so the token cannot leak through the referrer when a feed URL is opened in a browser. |
+| `redact_tokens_in_logs: true` | The token has to sit in the query string because Google cannot pass it any other way. Without this filter every token ends up in your journal and anything that ships logs. |
+
+Also:
+
+- An unknown account and a wrong token return the **same** 404. Different
+  errors would let someone enumerate valid account keys.
+- Tokens are compared with `secrets.compare_digest`.
+- Feeds are served `Cache-Control: private` so shared caches and proxies do
+  not retain timetables.
+- Give every feed its **own** token. A shared one means whoever has one URL
+  can read every timetable.
+
+Not included: rate limiting. Add it in your reverse proxy if the feed is
+publicly reachable.
+
+## A note on language
+
+Code, comments and documentation are English. The **calendar output is
+German** — `❌ Entfällt`, `Verlegt`, `Lehrer:`, `3. Stunde` — because WebUntis
+is a German-speaking-market product and the people reading these calendars are
+at schools in Germany, Austria and Switzerland. Making that text
+translatable would be a welcome contribution; it is currently hardcoded in
+`ics.py`.
+
+## Troubleshooting
+
+| Symptom | Cause |
+|---------|-------|
+| `404` on `/WebUntis/jsonrpc.do` | The school moved to another server, or `school` is wrong. `untis-ics check` shows the correct one. |
+| `bad credentials` | Password or user expired. Try the WebUntis web login first. |
+| Calendar empty in Google | Check `/status`. If the feed has data, Google simply has not fetched again yet. |
+| Feed returns `404` | Wrong token or unknown account key — both answer identically on purpose. |
+| No teacher names | Class logins (`personType 1`) do not receive a teacher field from WebUntis. Nothing to fix on this side. |
+
+A failed fetch never overwrites an existing `.ics` file with an empty
+calendar, so a brief WebUntis outage does not empty your calendar.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest
+ruff check .
+ruff format --check .
 ```
-
-Der Gewinn: systemd liest die Datei **als root** und reicht die Werte an den
-unprivilegierten Dienst weiter. Der Dienstbenutzer kann die Datei selbst nicht
-lesen. Läuft auf demselben Host noch ein Webserver unter dem gleichen Benutzer
-(typisch `www-data`), kommt eine kompromittierte Web-Anwendung damit nicht an
-die Untis-Passwörter – bei Klartext in der `config.yaml` schon.
-
-Das ist keine Verschlüsselung: der Dienst muss das Passwort im Klartext kennen,
-um sich bei WebUntis anzumelden. Es begrenzt nur, wer es von der Platte lesen
-kann.
-
-Weiteres:
-- Jeder Feed braucht einen **eigenen** Token. Ein geteilter Token heißt: wer
-  eine URL kennt, liest alle Stundenpläne.
-- Feed-URLs sind nur durch den Token geschützt – wer sie hat, kommt rein.
-  Entsprechend nicht in öffentliche Chats oder Issues kopieren.
-- `verify_ssl: false` schaltet die Zertifikatsprüfung ab. Die öffentlichen
-  WebUntis-Server haben gültige Zertifikate; die Option sollte auf `true`
-  bleiben.
-
-### Absicherung des Dienstes
-
-Der Dienst liefert personenbezogene Daten aus und steht oft öffentlich im
-Netz. Folgendes ist deshalb voreingestellt:
-
-| Einstellung | Wirkung |
-|-------------|---------|
-| `docs_enabled: false` | `/docs`, `/redoc` und `/openapi.json` werden nicht ausgeliefert. Sie beschreiben sonst die Angriffsfläche und laden Swagger-JS aus einem fremden CDN. |
-| `status_token_env` | `/status` verrät Account-Keys, Schulen und Fehlertexte und ist deshalb tokenpflichtig. Ohne konfigurierten Token antwortet er mit 404 – fail-closed, damit er nicht versehentlich offen steht. |
-| `security_headers: true` | `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy` und `Referrer-Policy: no-referrer`. Letzteres verhindert, dass der Token über den Referer abfließt, wenn jemand die Feed-URL im Browser öffnet. |
-| `redact_tokens_in_logs: true` | Der Token steht zwangsläufig im Query-String – Google kann ihn nicht anders übergeben. Ohne diesen Filter landet jeder Token im Journal und in allem, was Logs weiterreicht. |
-
-Zusätzlich:
-- Unbekannter Account und falscher Token liefern **dieselbe** Antwort
-  (`404`). Unterschiedliche Fehler würden verraten, welche Account-Keys es
-  gibt.
-- Token werden zeitkonstant verglichen (`secrets.compare_digest`).
-- Feeds werden mit `Cache-Control: private` ausgeliefert, damit geteilte
-  Caches und Proxys die Stundenpläne nicht vorhalten.
-- `/health` bleibt offen, verrät aber nur Status und Uhrzeit.
-
-Was der Dienst **nicht** mitbringt: Rate-Limiting. Wer den Feed öffentlich
-erreichbar macht, sollte das im Reverse Proxy ergänzen.
-
-## Fehlersuche
-
-| Symptom | Ursache |
-|---------|---------|
-| `404` auf `/WebUntis/jsonrpc.do` | Schule ist auf einen anderen Server umgezogen oder `school` stimmt nicht. `cli.py check` zeigt den richtigen Server. |
-| `bad credentials` | Passwort/Benutzer abgelaufen. Login zuerst im WebUntis-Web testen. |
-| Kalender in Google leer | `/status` prüfen. Liefert der Feed Daten, hat Google nur noch nicht neu abgerufen. |
-| Feed liefert `404` | Falscher Token oder unbekannter Account-Key – beide antworten bewusst gleich. |
-
-Der Dienst überschreibt eine vorhandene ICS-Datei bewusst **nicht** mit einem
-leeren Kalender, wenn ein Abruf fehlschlägt – ein kurzer Untis-Ausfall leert
-also nicht den Kalender.
-
-## Struktur
 
 ```
 untis_calendar/
-  config.py         # YAML + ENV laden, Validierung
-  school_lookup.py  # Schulname -> aktueller WebUntis-Server
-  untis_direct.py   # JSON-RPC-Client (authenticate, getTimetable)
-  untis_rest.py     # REST-Anreicherung: Online-Unterricht, Stundentexte
-  untis_client.py   # Abruf, Mapping, Filter, Doppelstunden-Zusammenfassung
-  ics.py            # ICS-Erzeugung
-  server.py         # FastAPI-Feeds + Hintergrund-Refresh
-  models.py, utils.py, logging_config.py
-cli.py              # Entry Point: generate | check | serve
-tests/              # pytest
+  config.py         # YAML + environment, validation
+  school_lookup.py  # school name -> current WebUntis server
+  untis_direct.py   # JSON-RPC client (authenticate, getTimetable)
+  untis_rest.py     # REST enrichment: online lessons, reschedules, colours
+  untis_client.py   # fetch, map, filter, merge consecutive lessons
+  ics.py            # ICS generation
+  colors.py         # Untis hex colours -> CSS names
+  retry.py          # backoff for transient network errors
+  heartbeat.py      # dead man's switch ping
+  server.py         # FastAPI feeds + background refresh
+  __main__.py       # CLI: generate | check | serve
 ```
 
-## Dokumentation
-- **DEPLOYMENT.md** – Debian-Anleitung, Betrieb
-- **ARCHITECTURE.md** – technische Details
+## Docs
 
-## Lizenz
-MIT
+- [ARCHITECTURE.md](ARCHITECTURE.md) — design decisions and internals
+- [DEPLOYMENT.md](DEPLOYMENT.md) — full deployment walkthrough
+- [CHANGELOG.md](CHANGELOG.md)
+
+## License
+
+MIT — see [LICENSE](LICENSE).

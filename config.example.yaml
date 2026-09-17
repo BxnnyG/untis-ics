@@ -3,77 +3,88 @@ app:
   window_days_before: 3
   window_days_after: 28
   output_dir: "./out"
-  mode: "server"               # "cli" oder "server"
-  merge_consecutive: true      # Doppelstunden zu EINEM Termin zusammenfassen
-  subject_style: "long"        # long | short | both - Fach in der Terminueberschrift
-  cancelled_style: "mark"      # mark | status | hide - siehe README
-  fetch_online_info: true      # Online-Unterricht, Verlegungen, Vertretungen per REST
-  # Hintergrund-Aktualisierung: tagsueber haeufig, nachts selten (0 = aus)
+  mode: "server"               # "cli" or "server"
+
+  merge_consecutive: true      # collapse double periods into a single event
+  subject_style: "long"        # long | short | both - subject in the title
+  cancelled_style: "mark"      # mark | status | hide - see README
+  fetch_online_info: true      # online lessons, reschedules, substitutions (REST)
+  use_untis_colors: true       # carry the school's subject colours into the feed
+  show_period_numbers: true    # add "3. Stunde" to the description
+
+  # Background refresh: often during the day, rarely at night (0 = disabled).
   refresh_interval_minutes: 15
   refresh_idle_minutes: 120
   active_hours_start: 6
   active_hours_end: 22
-  cache_ttl_seconds: 600       # nur bei refresh_interval_minutes: 0 relevant
+  cache_ttl_seconds: 600       # only relevant with refresh_interval_minutes: 0
 
 server:
   etag: true
   last_modified: true
 
-  # Interaktive API-Doku. Aus, solange der Dienst oeffentlich erreichbar ist.
+  # Interactive API docs. Off while the service is publicly reachable.
   docs_enabled: false
-  # X-Content-Type-Options, Referrer-Policy, CSP an jede Antwort haengen
+  # X-Content-Type-Options, Referrer-Policy, CSP on every response
   security_headers: true
-  # Token aus den Zugriffslogs entfernen - sie landen sonst im Journal
+  # Strip tokens from access logs - they end up in the journal otherwise
   redact_tokens_in_logs: true
-  # /status verraet Account-Keys und Schulen. Ohne Token antwortet er mit 404.
+  # /status exposes account keys and schools, so it needs a token.
+  # Without one it answers 404.
   status_token_env: "STATUS_TOKEN"
 
+  # Optional dead man's switch (Healthchecks.io, Uptime Kuma, ...).
+  # Pinged only when every enabled account has fresh data.
+  # heartbeat_url_env: "HEARTBEAT_URL"
+  # stale_after_minutes: 0     # 0 = three times the refresh interval
+
 accounts:
-  - key: "schueler1"           # taucht in der Feed-URL auf: /calendar/schueler1.ics
+  - key: "student1"            # appears in the feed URL: /calendar/student1.ics
     enabled: true
 
-    # WICHTIG: Das ist der WebUntis-"loginName" der Schule, nicht der Klartextname.
-    # Ermitteln mit:  python cli.py check --config config.yaml
-    # oder direkt über die Schulsuche von WebUntis.
-    school: "musterschule"
+    # IMPORTANT: the WebUntis "loginName" of the school, not its display name.
+    # Find it with:  python find_schools.py "My School"
+    school: "myschool"
 
-    # Optional. Leer lassen -> Server wird automatisch ermittelt.
-    # Empfohlen, weil WebUntis Schulen zwischen Servern verschiebt.
-    server: "musterschule.webuntis.com"
+    # Optional. Leave it out and the server is resolved automatically -
+    # recommended, because WebUntis moves schools between servers.
+    # server: "myschool.webuntis.com"
 
-    username: "MaxMuster"
-    password: "SuperGeheim1"   # oder: password_env: "UNTIS_PASS_USER1"
-    verify_ssl: true           # nur bei echten Zertifikatsproblemen auf false
+    username: "MyUser"
+    # Never put the password here. Point at an environment variable instead.
+    password_env: "UNTIS_PASS_STUDENT1"
+    verify_ssl: true           # only set false for genuine certificate problems
 
-    include_cancelled: true    # entfallene Stunden als "❌ Entfällt" mitliefern
+    include_cancelled: true    # keep cancelled lessons in the feed
 
-    # Optional: nur nötig, wenn NICHT der eingeloggte Benutzer gemeint ist.
-    # Die JSON-RPC-API braucht eine numerische ID, ein Name reicht nicht.
+    # Optional, and only needed when the lessons of someone other than the
+    # logged-in user are wanted. The JSON-RPC API needs a numeric id;
+    # a name is not enough.
     # element:
     #   type: "class"          # student | teacher | class | subject | room
-    #   id: 4720
+    #   id: 1234
 
     filters:
-      include_subjects: []     # leer = alles
-      exclude_subjects: ["ETHIK"]
+      include_subjects: []     # empty = everything
+      exclude_subjects: []
 
-    color_map:
-      MATHE: "#1f77b4"
+    color_map: {}              # overrides the colour Untis reports, per subject
 
     calendar:
-      file_name: "schueler1.ics"
-      display_name: "Stundenplan Max"   # Kalendername in Google/Apple
+      file_name: "student1.ics"
+      display_name: "My timetable"    # calendar name in Google/Apple
       web_feed: true
-      token: "PRO-ACCOUNT-EIGENER-TOKEN"  # oder: token_env: "FEED_TOKEN_USER1"
+      token_env: "FEED_TOKEN_STUDENT1"
 
-  - key: "schueler2"
+  - key: "student2"
     enabled: true
-    school: "musterschule"
-    server: "musterschule.webuntis.com"
-    username: "user2"
-    password: "SuperGeheim2"
+    school: "myschool"
+    username: "OtherUser"
+    password_env: "UNTIS_PASS_STUDENT2"
     calendar:
-      file_name: "schueler2.ics"
-      display_name: "Stundenplan Lisa"
+      file_name: "student2.ics"
+      display_name: "Second timetable"
       web_feed: true
-      token: "ANDERER-TOKEN-ALS-OBEN"
+      # Give every feed its own token. A shared one means whoever has one URL
+      # can read every timetable.
+      token_env: "FEED_TOKEN_STUDENT2"

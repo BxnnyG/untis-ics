@@ -1,4 +1,4 @@
-"""Wiederholung bei Netzwerkfehlern - und wo sie unterbleiben muss."""
+"""Retrying network failures - and where it must not happen."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def _http_error(status: int) -> requests.exceptions.HTTPError:
 
 
 class Counter:
-    """Schlaegt die ersten n Aufrufe fehl, danach Erfolg."""
+    """Fails the first n calls, then succeeds."""
 
     def __init__(self, fails: int, exc: BaseException):
         self.fails = fails
@@ -57,8 +57,8 @@ def test_server_errors_are_retried(status):
 
 @pytest.mark.parametrize("status", [400, 401, 403, 404])
 def test_client_errors_are_not_retried(status):
-    """Ein abgelehnter Login darf NICHT wiederholt werden - wiederholte
-    Fehlversuche sperren bei WebUntis das Konto."""
+    """A rejected login must NOT be retried - repeated failed attempts lock the
+    WebUntis account."""
     c = Counter(99, _http_error(status))
     with pytest.raises(requests.exceptions.HTTPError):
         with_retry(c, sleep=lambda _: None)

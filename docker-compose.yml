@@ -1,0 +1,40 @@
+services:
+  untis-ics:
+    image: ghcr.io/bxnnyg/untis-ics:latest
+    # Build locally instead of pulling:
+    #   docker compose build
+    build: .
+    container_name: untis-ics
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      # Your accounts. Copy config.example.yaml and edit it.
+      - ./config.yaml:/app/config.yaml:ro
+      # Generated .ics files. Keeps the last good state across restarts, so a
+      # WebUntis outage right after a restart does not leave an empty feed.
+      - untis-data:/data
+
+    environment:
+      # Passwords and tokens belong here (or in the env_file below), never in
+      # config.yaml. The names must match password_env / token_env.
+      UNTIS_PASS_STUDENT1: "${UNTIS_PASS_STUDENT1:-}"
+      FEED_TOKEN_STUDENT1: "${FEED_TOKEN_STUDENT1:-}"
+      # /status stays hidden unless this is set.
+      STATUS_TOKEN: "${STATUS_TOKEN:-}"
+      # Optional dead man's switch (Healthchecks.io, Uptime Kuma, ...).
+      HEARTBEAT_URL: "${HEARTBEAT_URL:-}"
+      # Any app.* / server.* setting can be overridden from here.
+      UNTIS_APP_TIMEZONE: "${UNTIS_APP_TIMEZONE:-Europe/Berlin}"
+
+    # Alternatively keep the secrets in a file (chmod 600, not in git):
+    # env_file:
+    #   - .env
+
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  untis-data:
