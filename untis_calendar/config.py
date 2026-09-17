@@ -120,6 +120,27 @@ class ServerConfig(BaseModel):
     etag: bool = True
     last_modified: bool = True
 
+    # Interaktive API-Doku (/docs, /redoc, /openapi.json). Standardmaessig aus:
+    # der Dienst steht oeffentlich und die Doku verraet nur die Angriffsflaeche.
+    docs_enabled: bool = False
+
+    # /status verraet Account-Keys, Schulen und Fehlertexte und ist deshalb
+    # tokenpflichtig. Ohne gesetzten Token antwortet der Endpunkt mit 404.
+    status_token: Optional[str] = None
+    status_token_env: Optional[str] = None
+
+    # X-Content-Type-Options, Referrer-Policy usw. an jede Antwort haengen
+    security_headers: bool = True
+
+    # Token aus den Zugriffslogs entfernen (sie landen sonst im Journal)
+    redact_tokens_in_logs: bool = True
+
+    @property
+    def status_secret(self) -> Optional[str]:
+        return self.status_token or (
+            os.getenv(self.status_token_env) if self.status_token_env else None
+        )
+
 
 class Config(BaseModel):
     app: AppConfig

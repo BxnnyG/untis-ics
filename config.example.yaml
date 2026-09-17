@@ -19,6 +19,15 @@ server:
   etag: true
   last_modified: true
 
+  # Interaktive API-Doku. Aus, solange der Dienst oeffentlich erreichbar ist.
+  docs_enabled: false
+  # X-Content-Type-Options, Referrer-Policy, CSP an jede Antwort haengen
+  security_headers: true
+  # Token aus den Zugriffslogs entfernen - sie landen sonst im Journal
+  redact_tokens_in_logs: true
+  # /status verraet Account-Keys und Schulen. Ohne Token antwortet er mit 404.
+  status_token_env: "STATUS_TOKEN"
+
 accounts:
   - key: "schueler1"           # taucht in der Feed-URL auf: /calendar/schueler1.ics
     enabled: true

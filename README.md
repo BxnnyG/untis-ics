@@ -58,7 +58,7 @@ journalctl -u untis-calendar-sync -f
 | Pfad | Zweck |
 |------|-------|
 | `/health` | Lebt der Dienst? |
-| `/status` | Pro Account: letzter Erfolg, letzter Fehler, Terminanzahl, Dateialter |
+| `/status?token=…` | Pro Account: letzter Erfolg, letzter Fehler, Terminanzahl, Dateialter. Braucht `status_token_env`. |
 | `/calendar/<key>.ics?token=<token>` | Der eigentliche Feed |
 
 `/status` ist die erste Anlaufstelle, wenn ein Kalender leer wirkt.
@@ -217,6 +217,30 @@ Weiteres:
   WebUntis-Server haben gültige Zertifikate; die Option sollte auf `true`
   bleiben.
 
+### Absicherung des Dienstes
+
+Der Dienst liefert personenbezogene Daten aus und steht oft öffentlich im
+Netz. Folgendes ist deshalb voreingestellt:
+
+| Einstellung | Wirkung |
+|-------------|---------|
+| `docs_enabled: false` | `/docs`, `/redoc` und `/openapi.json` werden nicht ausgeliefert. Sie beschreiben sonst die Angriffsfläche und laden Swagger-JS aus einem fremden CDN. |
+| `status_token_env` | `/status` verrät Account-Keys, Schulen und Fehlertexte und ist deshalb tokenpflichtig. Ohne konfigurierten Token antwortet er mit 404 – fail-closed, damit er nicht versehentlich offen steht. |
+| `security_headers: true` | `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy` und `Referrer-Policy: no-referrer`. Letzteres verhindert, dass der Token über den Referer abfließt, wenn jemand die Feed-URL im Browser öffnet. |
+| `redact_tokens_in_logs: true` | Der Token steht zwangsläufig im Query-String – Google kann ihn nicht anders übergeben. Ohne diesen Filter landet jeder Token im Journal und in allem, was Logs weiterreicht. |
+
+Zusätzlich:
+- Unbekannter Account und falscher Token liefern **dieselbe** Antwort
+  (`404`). Unterschiedliche Fehler würden verraten, welche Account-Keys es
+  gibt.
+- Token werden zeitkonstant verglichen (`secrets.compare_digest`).
+- Feeds werden mit `Cache-Control: private` ausgeliefert, damit geteilte
+  Caches und Proxys die Stundenpläne nicht vorhalten.
+- `/health` bleibt offen, verrät aber nur Status und Uhrzeit.
+
+Was der Dienst **nicht** mitbringt: Rate-Limiting. Wer den Feed öffentlich
+erreichbar macht, sollte das im Reverse Proxy ergänzen.
+
 ## Fehlersuche
 
 | Symptom | Ursache |
@@ -224,7 +248,7 @@ Weiteres:
 | `404` auf `/WebUntis/jsonrpc.do` | Schule ist auf einen anderen Server umgezogen oder `school` stimmt nicht. `cli.py check` zeigt den richtigen Server. |
 | `bad credentials` | Passwort/Benutzer abgelaufen. Login zuerst im WebUntis-Web testen. |
 | Kalender in Google leer | `/status` prüfen. Liefert der Feed Daten, hat Google nur noch nicht neu abgerufen. |
-| Feed liefert `401` | Falscher oder alter Token in der Abo-URL. |
+| Feed liefert `404` | Falscher Token oder unbekannter Account-Key – beide antworten bewusst gleich. |
 
 Der Dienst überschreibt eine vorhandene ICS-Datei bewusst **nicht** mit einem
 leeren Kalender, wenn ein Abruf fehlschlägt – ein kurzer Untis-Ausfall leert

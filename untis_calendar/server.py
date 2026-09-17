@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -18,6 +20,37 @@ from .ics import events_to_ics
 from .logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+_TOKEN_IN_URL = re.compile(r"(?i)([?&](?:token|access_token)=)[^&\s\"']+")
+
+
+class RedactTokensFilter(logging.Filter):
+    """Ersetzt Tokens in Zugriffslogs durch ***.
+
+    Der Feed-Token steht zwangslaeufig im Query-String - Google kann ihn nicht
+    anders uebergeben. Uvicorn loggt die volle URL, damit landet jeder Token im
+    Journal und in allem, was Logs weiterreicht.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            record.args = tuple(
+                _TOKEN_IN_URL.sub(r"\1***", a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        if isinstance(record.msg, str):
+            record.msg = _TOKEN_IN_URL.sub(r"\1***", record.msg)
+        return True
+
+
+def token_matches(expected: Optional[str], given: Optional[str]) -> bool:
+    """Zeitkonstanter Vergleich, damit sich der Token nicht erraten laesst."""
+    if not expected:
+        return True  # kein Token konfiguriert -> Feed ist offen
+    if not given:
+        return False
+    return secrets.compare_digest(expected, given)
 
 
 def compute_interval_minutes(app: "AppConfig", now_local: Optional[datetime] = None) -> int:
@@ -131,15 +164,53 @@ def create_app(config_path: str) -> FastAPI:
             if task:
                 task.cancel()
 
-    app = FastAPI(title="Untis → ICS", lifespan=lifespan)
+    if cfg.server.redact_tokens_in_logs:
+        flt = RedactTokensFilter()
+        for name in ("uvicorn.access", "uvicorn.error", "uvicorn"):
+            logging.getLogger(name).addFilter(flt)
+
+    # Ohne docs_enabled keine /docs, /redoc und /openapi.json ausliefern:
+    # der Dienst ist oeffentlich erreichbar und die Doku beschreibt nur,
+    # wie man ihn angreift.
+    docs = cfg.server.docs_enabled
+    app = FastAPI(
+        title="Untis → ICS",
+        lifespan=lifespan,
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
+
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        if cfg.server.security_headers:
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("X-Frame-Options", "DENY")
+            # Verhindert, dass der Token ueber den Referer abfliesst, wenn
+            # jemand die Feed-URL im Browser oeffnet.
+            response.headers.setdefault("Referrer-Policy", "no-referrer")
+            response.headers.setdefault(
+                "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+            )
+        return response
 
     @app.get("/health")
     def health():
         return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
 
     @app.get("/status")
-    def status():
-        """Übersicht pro Account - zeigt sofort, wenn ein Feed klemmt."""
+    def status(token: Optional[str] = None):
+        """Übersicht pro Account - zeigt sofort, wenn ein Feed klemmt.
+
+        Verraet Account-Keys, Schulen und Fehlertexte und ist deshalb
+        tokenpflichtig. Ohne konfigurierten Token bleibt der Endpunkt
+        verborgen, statt versehentlich offen zu stehen.
+        """
+        expected = cfg.server.status_secret
+        if not expected or not token_matches(expected, token):
+            raise HTTPException(404, detail="Not Found")
+
         out = {}
         for acc in cfg.accounts:
             st = states[acc.key]
@@ -183,12 +254,19 @@ def create_app(config_path: str) -> FastAPI:
     @app.get("/calendar/{account_key}.ics")
     async def get_calendar(account_key: str, request: Request, token: Optional[str] = None):
         account = next((a for a in cfg.accounts if a.key == account_key), None)
-        if not account:
-            raise HTTPException(404, detail="Account nicht gefunden")
-        if account.calendar.web_feed:
-            expected = account.calendar.feed_token
-            if expected and token != expected:
-                raise HTTPException(401, detail="Ungültiger Token")
+
+        # Unbekannter Account und falscher Token liefern bewusst dieselbe
+        # Antwort. Unterschiedliche Fehler wuerden verraten, welche
+        # Account-Keys existieren.
+        if account is None or (
+            account.calendar.web_feed
+            and not token_matches(account.calendar.feed_token, token)
+        ):
+            if account is None:
+                logger.info("Feed-Abruf für unbekannten Account '%s'", account_key)
+            else:
+                logger.warning("Feed-Abruf mit falschem Token für '%s'", account_key)
+            raise HTTPException(404, detail="Not Found")
 
         out_file = out_dir / account.calendar.file_name
 
@@ -214,7 +292,9 @@ def create_app(config_path: str) -> FastAPI:
                 )
             ics_bytes = out_file.read_bytes()
 
-        headers = {"Cache-Control": f"public, max-age={cfg.app.cache_ttl_seconds}"}
+        # "private": der Feed haengt an einem Token und enthaelt
+        # personenbezogene Daten - geteilte Caches duerfen ihn nicht halten.
+        headers = {"Cache-Control": f"private, max-age={cfg.app.cache_ttl_seconds}"}
         if cfg.server.etag:
             etag = '"' + hashlib.md5(ics_bytes).hexdigest() + '"'  # nosec - nur ETag
             headers["ETag"] = etag
