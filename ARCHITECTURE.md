@@ -240,6 +240,7 @@ app:
 In `cli.py` ändern:
 ```python
 from untis_calendar.logging_config import setup_logging
+
 setup_logging(level=logging.DEBUG)
 ```
 
@@ -305,18 +306,19 @@ accounts:
 # In cli.py
 from apscheduler.schedulers.blocking import BlockingScheduler
 
+
 def cmd_schedule(args):
     cfg = Config.load(args.config)
     client = UntisClient(cfg.app)
-    
+
     def sync():
         for acc in cfg.accounts:
             events = client.fetch_events(acc)
             ics_bytes = events_to_ics(events)
             # ...
-    
+
     scheduler = BlockingScheduler()
-    scheduler.add_job(sync, 'interval', minutes=15)
+    scheduler.add_job(sync, "interval", minutes=15)
     scheduler.start()
 ```
 
@@ -343,6 +345,7 @@ Google Calendar ignoriert das meist, aber Apple Calendar kann es nutzen.
 @app.get("/admin")
 def admin_ui():
     return HTMLResponse("""<form>...</form>""")
+
 
 @app.post("/admin/save")
 def save_config(data: dict):
@@ -381,6 +384,7 @@ pytest tests/
 ```python
 from untis_calendar.models import LessonEvent
 from untis_calendar.ics import events_to_ics
+
 
 def test_ics_contains_event():
     ev = LessonEvent(...)
@@ -425,6 +429,7 @@ else:
 **Alternative** (Redis/Memcached):
 ```python
 import redis
+
 r = redis.Redis()
 cached = r.get(f"events:{account.key}")
 if cached and r.ttl(f"events:{account.key}") > 0:
@@ -465,6 +470,7 @@ out/
 **Generierung**:
 ```python
 import secrets
+
 token = secrets.token_urlsafe(32)
 ```
 

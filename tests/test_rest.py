@@ -1,4 +1,5 @@
 """Anreicherung über die REST-Ansicht (Online-Unterricht, Stundentexte)."""
+
 from datetime import date
 
 from untis_calendar.untis_rest import _clean_url, _find_url_in_text, _mondays
@@ -26,8 +27,7 @@ def test_url_found_in_lesson_text():
 
 
 def test_trailing_punctuation_stripped():
-    assert _find_url_in_text("Link: https://meet.example.org/x.") == \
-        "https://meet.example.org/x"
+    assert _find_url_in_text("Link: https://meet.example.org/x.") == "https://meet.example.org/x"
 
 
 def test_no_url_returns_none():

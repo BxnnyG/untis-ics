@@ -6,6 +6,7 @@ aktuell zustaendigen Server.
 
     python find_schools.py "Muster-Berufskolleg"
 """
+
 from __future__ import annotations
 
 import sys

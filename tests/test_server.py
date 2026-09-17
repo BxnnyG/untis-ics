@@ -1,4 +1,5 @@
 """Tests für das Feed-Verhalten und die Absicherung des Servers."""
+
 import logging
 import textwrap
 
@@ -66,6 +67,7 @@ def test_disabled_without_cache_returns_503(client):
 
 # --- Absicherung ------------------------------------------------------------
 
+
 def test_wrong_token_is_indistinguishable_from_unknown_account(client):
     """Unterschiedliche Fehler wuerden verraten, welche Account-Keys existieren."""
     falsch = client.get("/calendar/aus.ics", params={"token": "falsch"})
@@ -127,6 +129,7 @@ def test_feed_is_not_publicly_cacheable(client):
 
 # --- Token-Vergleich und Log-Redaction --------------------------------------
 
+
 def test_token_matches_is_exact():
     assert token_matches("abc", "abc") is True
     assert token_matches("abc", "abcd") is False
@@ -140,9 +143,15 @@ def test_no_configured_token_means_open_feed():
 
 def test_log_filter_redacts_token():
     """Der Token steht zwangslaeufig im Query-String - er darf nicht ins Journal."""
-    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0,
-                            '%s - "%s"', ("1.2.3.4",
-                            'GET /calendar/a.ics?token=SUPERGEHEIM HTTP/1.1'), None)
+    rec = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        "",
+        0,
+        '%s - "%s"',
+        ("1.2.3.4", "GET /calendar/a.ics?token=SUPERGEHEIM HTTP/1.1"),
+        None,
+    )
     RedactTokensFilter().filter(rec)
     rendered = rec.getMessage()
     assert "SUPERGEHEIM" not in rendered

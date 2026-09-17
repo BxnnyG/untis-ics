@@ -77,8 +77,7 @@ def _build_description(e: LessonEvent) -> str:
         # Kuerzel in Klammern, falls es sich vom Klarnamen unterscheidet
         if e.teachers_long and e.teachers and e.teachers_long != e.teachers:
             paired = ", ".join(
-                f"{lang} ({kurz})"
-                for lang, kurz in zip(e.teachers_long, e.teachers)
+                f"{lang} ({kurz})" for lang, kurz in zip(e.teachers_long, e.teachers)
             )
             body.append(f"Lehrer: {paired}")
         else:
@@ -121,9 +120,13 @@ def _categories(e: LessonEvent) -> list[str]:
     return cats
 
 
-def events_to_ics(events: Iterable[LessonEvent], calendar_name: str | None = None,
-                  refresh_minutes: int = 60, subject_style: str = "long",
-                  cancelled_style: str = "mark") -> bytes:
+def events_to_ics(
+    events: Iterable[LessonEvent],
+    calendar_name: str | None = None,
+    refresh_minutes: int = 60,
+    subject_style: str = "long",
+    cancelled_style: str = "mark",
+) -> bytes:
     cal = Calendar()
     cal.add("prodid", "-//untis-calendar//v1//DE")
     cal.add("version", "2.0")

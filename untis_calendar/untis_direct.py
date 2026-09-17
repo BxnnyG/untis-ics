@@ -1,4 +1,5 @@
 """Direkte WebUntis JSON-RPC Implementierung."""
+
 from __future__ import annotations
 
 import logging
@@ -34,8 +35,15 @@ ERR_NOT_AUTHENTICATED = -8520
 class DirectUntisSession:
     """Direkte JSON-RPC Implementierung ohne webuntis-Bibliothek."""
 
-    def __init__(self, server: str, school: str, username: str, password: str,
-                 verify_ssl: bool = True, auto_resolve: bool = True):
+    def __init__(
+        self,
+        server: str,
+        school: str,
+        username: str,
+        password: str,
+        verify_ssl: bool = True,
+        auto_resolve: bool = True,
+    ):
         self.school = school
         self.username = username
         self.password = password
@@ -51,6 +59,7 @@ class DirectUntisSession:
 
         if not verify_ssl:
             import urllib3
+
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     @staticmethod
@@ -74,8 +83,9 @@ class DirectUntisSession:
             headers["Cookie"] = f"JSESSIONID={self.session_id}"
 
         logger.debug("JSON-RPC Request: %s", method)
-        resp = self.session.post(self.url, json=payload, headers=headers,
-                                 verify=self.verify_ssl, timeout=30)
+        resp = self.session.post(
+            self.url, json=payload, headers=headers, verify=self.verify_ssl, timeout=30
+        )
 
         if resp.status_code == 404:
             raise UntisEndpointError(
@@ -106,11 +116,14 @@ class DirectUntisSession:
 
     def login(self) -> DirectUntisSession:
         try:
-            result = self._rpc_request("authenticate", {
-                "user": self.username,
-                "password": self.password,
-                "client": "untis-calendar",
-            })
+            result = self._rpc_request(
+                "authenticate",
+                {
+                    "user": self.username,
+                    "password": self.password,
+                    "client": "untis-calendar",
+                },
+            )
         except UntisEndpointError:
             # Schule vermutlich auf einen anderen Server umgezogen -> einmalig neu auflösen
             if not self.auto_resolve:
@@ -118,27 +131,34 @@ class DirectUntisSession:
             new_server = resolve_server(self.school)
             if not new_server or self._normalize(new_server) == self.server:
                 raise
-            logger.warning("Server für '%s' umgezogen: %s -> %s",
-                           self.school, self.server, new_server)
+            logger.warning(
+                "Server für '%s' umgezogen: %s -> %s", self.school, self.server, new_server
+            )
             self.server = self._normalize(new_server)
             self.auto_resolve = False  # nur ein Retry
-            result = self._rpc_request("authenticate", {
-                "user": self.username,
-                "password": self.password,
-                "client": "untis-calendar",
-            })
+            result = self._rpc_request(
+                "authenticate",
+                {
+                    "user": self.username,
+                    "password": self.password,
+                    "client": "untis-calendar",
+                },
+            )
 
         if not isinstance(result, dict) or not result.get("sessionId"):
-            raise UntisAuthError(
-                f"Login für '{self.username}' lieferte keine Session: {result}"
-            )
+            raise UntisAuthError(f"Login für '{self.username}' lieferte keine Session: {result}")
 
         self.session_id = result.get("sessionId")
         self.person_type = result.get("personType")
         self.person_id = result.get("personId")
         self.klasse_id = result.get("klasseId")
-        logger.info("Login erfolgreich: %s @ %s (Type: %s, ID: %s)",
-                    self.username, self.school, self.person_type, self.person_id)
+        logger.info(
+            "Login erfolgreich: %s @ %s (Type: %s, ID: %s)",
+            self.username,
+            self.school,
+            self.person_type,
+            self.person_id,
+        )
         return self
 
     def logout(self) -> None:
@@ -180,8 +200,9 @@ class DirectUntisSession:
 
 
 @contextmanager
-def direct_untis_login(server: str, school: str, username: str, password: str,
-                       verify_ssl: bool = True) -> Iterator[DirectUntisSession]:
+def direct_untis_login(
+    server: str, school: str, username: str, password: str, verify_ssl: bool = True
+) -> Iterator[DirectUntisSession]:
     """Context-Manager für direkte WebUntis-Session."""
     session = DirectUntisSession(server, school, username, password, verify_ssl)
     try:

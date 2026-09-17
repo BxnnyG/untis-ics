@@ -6,6 +6,7 @@ Config verdrahteter Server führt dann zu HTTP 404 auf /WebUntis/jsonrpc.do
 und der Sync bricht still zusammen. Darum fragen wir den zuständigen Server
 bei Bedarf zur Laufzeit ab.
 """
+
 from __future__ import annotations
 
 import logging

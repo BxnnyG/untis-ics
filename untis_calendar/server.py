@@ -35,8 +35,7 @@ class RedactTokensFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.args:
             record.args = tuple(
-                _TOKEN_IN_URL.sub(r"\1***", a) if isinstance(a, str) else a
-                for a in record.args
+                _TOKEN_IN_URL.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args
             )
         if isinstance(record.msg, str):
             record.msg = _TOKEN_IN_URL.sub(r"\1***", record.msg)
@@ -154,8 +153,10 @@ def create_app(config_path: str) -> FastAPI:
             logger.info(
                 "Hintergrund-Refresh aktiv: alle %d Min zwischen %02d:00 und %02d:00, "
                 "sonst alle %d Min",
-                cfg.app.refresh_interval_minutes, cfg.app.active_hours_start,
-                cfg.app.active_hours_end, cfg.app.refresh_idle_minutes,
+                cfg.app.refresh_interval_minutes,
+                cfg.app.active_hours_start,
+                cfg.app.active_hours_end,
+                cfg.app.refresh_idle_minutes,
             )
         try:
             yield
@@ -222,7 +223,8 @@ def create_app(config_path: str) -> FastAPI:
                 "file_size": f.stat().st_size if f.exists() else 0,
                 "file_modified": (
                     datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat()
-                    if f.exists() else None
+                    if f.exists()
+                    else None
                 ),
                 "events": st.event_count,
                 "last_success": st.last_success.isoformat() if st.last_success else None,
@@ -242,11 +244,13 @@ def create_app(config_path: str) -> FastAPI:
         if not out_file.exists():
             return True
         age = datetime.now(timezone.utc) - datetime.fromtimestamp(
-            out_file.stat().st_mtime, timezone.utc)
+            out_file.stat().st_mtime, timezone.utc
+        )
 
         if cfg.app.refresh_interval_minutes > 0:
-            grace = timedelta(minutes=3 * max(cfg.app.refresh_interval_minutes,
-                                              cfg.app.refresh_idle_minutes))
+            grace = timedelta(
+                minutes=3 * max(cfg.app.refresh_interval_minutes, cfg.app.refresh_idle_minutes)
+            )
             return age > grace
         return age > timedelta(seconds=cfg.app.cache_ttl_seconds)
 
@@ -258,8 +262,7 @@ def create_app(config_path: str) -> FastAPI:
         # Antwort. Unterschiedliche Fehler wuerden verraten, welche
         # Account-Keys existieren.
         if account is None or (
-            account.calendar.web_feed
-            and not token_matches(account.calendar.feed_token, token)
+            account.calendar.web_feed and not token_matches(account.calendar.feed_token, token)
         ):
             if account is None:
                 logger.info("Feed-Abruf für unbekannten Account '%s'", account_key)
@@ -286,8 +289,9 @@ def create_app(config_path: str) -> FastAPI:
             # Frischer Abruf nicht möglich (oder nicht nötig) -> letzten guten Stand liefern
             if not out_file.exists():
                 raise HTTPException(
-                    503, detail="Kalender konnte nicht erzeugt werden und es liegt "
-                                "kein zwischengespeicherter Stand vor."
+                    503,
+                    detail="Kalender konnte nicht erzeugt werden und es liegt "
+                    "kein zwischengespeicherter Stand vor.",
                 )
             ics_bytes = out_file.read_bytes()
 
@@ -304,7 +308,8 @@ def create_app(config_path: str) -> FastAPI:
             headers["Last-Modified"] = format_datetime(mtime, usegmt=True)
 
         headers["Content-Disposition"] = f'inline; filename="{account.calendar.file_name}"'
-        return Response(content=ics_bytes, media_type="text/calendar; charset=utf-8",
-                        headers=headers)
+        return Response(
+            content=ics_bytes, media_type="text/calendar; charset=utf-8", headers=headers
+        )
 
     return app

@@ -21,7 +21,9 @@ class UntisClient:
     def __init__(self, app: AppConfig):
         self.app = app
 
-    def fetch_events(self, account: AccountConfig, now: datetime | None = None) -> list[LessonEvent]:
+    def fetch_events(
+        self, account: AccountConfig, now: datetime | None = None
+    ) -> list[LessonEvent]:
         """Holt den Stundenplan für einen Account.
 
         Wirft bei Fehlern eine Exception. Bewusst KEIN leeres Ergebnis bei
@@ -93,13 +95,15 @@ class UntisClient:
         if el.id is None:
             logger.warning(
                 "element.type '%s' gesetzt, aber keine element.id - "
-                "die JSON-RPC-API braucht eine numerische ID. Wird ignoriert.", el.type
+                "die JSON-RPC-API braucht eine numerische ID. Wird ignoriert.",
+                el.type,
             )
             return None
         return {"id": el.id, "type": type_id}
 
-    def _map_raw_to_event(self, r: dict[str, Any], account: AccountConfig,
-                          extras: dict[str, Any] | None = None) -> LessonEvent:
+    def _map_raw_to_event(
+        self, r: dict[str, Any], account: AccountConfig, extras: dict[str, Any] | None = None
+    ) -> LessonEvent:
         tz = self.app.timezone
         school = account.school
         acct = account.key
@@ -163,7 +167,9 @@ class UntisClient:
         if source_id:
             uid = stable_uid(school, acct, "lesson", source_id)
         else:
-            uid = stable_uid(school, acct, subject, start_dt.isoformat(), end_dt.isoformat(), room or "")
+            uid = stable_uid(
+                school, acct, subject, start_dt.isoformat(), end_dt.isoformat(), room or ""
+            )
 
         return LessonEvent(
             uid=uid,
@@ -200,8 +206,9 @@ class UntisClient:
             return None
         try:
             return tz_aware(
-                datetime(int(ymd[0:4]), int(ymd[4:6]), int(ymd[6:8]),
-                         int(hhmm) // 100, int(hhmm) % 100),
+                datetime(
+                    int(ymd[0:4]), int(ymd[4:6]), int(ymd[6:8]), int(hhmm) // 100, int(hhmm) % 100
+                ),
                 tz,
             )
         except ValueError:
@@ -218,7 +225,8 @@ class UntisClient:
         """
         by_slot: dict[tuple, LessonEvent] = {
             (e.start.date(), e.start.hour, e.start.minute): e
-            for e in events if e.status == "cancelled"
+            for e in events
+            if e.status == "cancelled"
         }
         for ev in events:
             if not ev.moved_from:
@@ -271,11 +279,9 @@ class UntisClient:
         for item in val:
             if isinstance(item, dict):
                 if long:
-                    name = (item.get("longname") or item.get("longName")
-                            or item.get("name"))
+                    name = item.get("longname") or item.get("longName") or item.get("name")
                 else:
-                    name = (item.get("name") or item.get("longname")
-                            or item.get("longName"))
+                    name = item.get("name") or item.get("longname") or item.get("longName")
                 if name:
                     out.append(str(name))
             elif item:

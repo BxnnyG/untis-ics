@@ -1,4 +1,5 @@
 """Secrets kommen aus der Umgebung, nicht aus der config.yaml."""
+
 import textwrap
 
 import pytest

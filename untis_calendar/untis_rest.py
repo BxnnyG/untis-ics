@@ -11,6 +11,7 @@ Diese Klasse holt genau diese Zusatzinfos und liefert sie als Map
 period-id -> Extras. Faellt der Abruf aus, laeuft der Sync ohne Extras
 weiter - die Basisdaten kommen weiterhin aus JSON-RPC.
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,9 +57,11 @@ class LessonExtras:
         self.substitutions: list[tuple] = []
 
     def __repr__(self) -> str:  # pragma: no cover - nur Debug
-        return (f"LessonExtras(online={self.online}, url={self.meeting_url!r}, "
-                f"state={self.cell_state}, from={self.moved_from}, to={self.moved_to}, "
-                f"subst={self.substitutions})")
+        return (
+            f"LessonExtras(online={self.online}, url={self.meeting_url!r}, "
+            f"state={self.cell_state}, from={self.moved_from}, to={self.moved_to}, "
+            f"subst={self.substitutions})"
+        )
 
 
 def _clean_url(raw: Any) -> str | None:
@@ -85,8 +88,15 @@ def _find_url_in_text(*texts: Any) -> str | None:
 
 
 class UntisRestSession:
-    def __init__(self, server: str, school: str, username: str, password: str,
-                 verify_ssl: bool = True, timeout: int = 25):
+    def __init__(
+        self,
+        server: str,
+        school: str,
+        username: str,
+        password: str,
+        verify_ssl: bool = True,
+        timeout: int = 25,
+    ):
         self.server = server if server.startswith("http") else f"https://{server}"
         self.school = school
         self.username = username
@@ -115,13 +125,15 @@ class UntisRestSession:
 
     def logout(self) -> None:
         try:
-            self.session.get(f"{self.server}/WebUntis/saml/logout",
-                             verify=self.verify_ssl, timeout=self.timeout)
+            self.session.get(
+                f"{self.server}/WebUntis/saml/logout", verify=self.verify_ssl, timeout=self.timeout
+            )
         except Exception as e:
             logger.debug("REST-Logout ignoriert: %s", e)
 
-    def _week_data(self, element_id: int, element_type: int,
-                   day: date) -> tuple[list[dict[str, Any]], dict[tuple, str]]:
+    def _week_data(
+        self, element_id: int, element_type: int, day: date
+    ) -> tuple[list[dict[str, Any]], dict[tuple, str]]:
         resp = self.session.get(
             f"{self.server}/WebUntis/api/public/timetable/weekly/data",
             params={
@@ -151,8 +163,9 @@ class UntisRestSession:
             names[key] = el.get("name") or el.get("longName") or ""
         return periods, names
 
-    def fetch_extras(self, element_id: int, element_type: int,
-                     start: date, end: date) -> dict[str, LessonExtras]:
+    def fetch_extras(
+        self, element_id: int, element_type: int, start: date, end: date
+    ) -> dict[str, LessonExtras]:
         """Extras je Perioden-ID fuer den Zeitraum."""
         out: dict[str, LessonExtras] = {}
         for monday in _mondays(start, end):
@@ -201,8 +214,7 @@ class UntisRestSession:
                     if vorher != nachher:
                         ex.substitutions.append((label, vorher, nachher))
 
-                texts = [p.get(k) for k in
-                         ("lessonText", "periodText", "periodInfo", "substText")]
+                texts = [p.get(k) for k in ("lessonText", "periodText", "periodInfo", "substText")]
                 ex.texts = [str(t).strip() for t in texts if t and str(t).strip()]
 
                 if not ex.meeting_url:
@@ -221,10 +233,17 @@ def _mondays(start: date, end: date) -> Iterator[date]:
         cur += timedelta(days=7)
 
 
-def fetch_lesson_extras(server: str, school: str, username: str, password: str,
-                        element_id: int, element_type: int,
-                        start: date, end: date,
-                        verify_ssl: bool = True) -> dict[str, LessonExtras]:
+def fetch_lesson_extras(
+    server: str,
+    school: str,
+    username: str,
+    password: str,
+    element_id: int,
+    element_type: int,
+    start: date,
+    end: date,
+    verify_ssl: bool = True,
+) -> dict[str, LessonExtras]:
     """Bequemer Einstieg. Wirft nicht - im Fehlerfall kommt eine leere Map."""
     sess = UntisRestSession(server, school, username, password, verify_ssl)
     try:

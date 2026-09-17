@@ -11,9 +11,16 @@ def ev(**over):
         "uid": "u1@untis-calendar",
         "start": datetime(2026, 9, 9, 7, 30, tzinfo=timezone.utc),
         "end": datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc),
-        "subject": "D", "room": "R101", "teachers": ["LR"], "groups": ["10A"],
-        "status": "scheduled", "notes": None, "color_key": None,
-        "source_id": "1", "source_school": "musterschule", "account_key": "schueler1",
+        "subject": "D",
+        "room": "R101",
+        "teachers": ["LR"],
+        "groups": ["10A"],
+        "status": "scheduled",
+        "notes": None,
+        "color_key": None,
+        "source_id": "1",
+        "source_school": "musterschule",
+        "account_key": "schueler1",
     }
     d.update(over)
     return LessonEvent(**d)
@@ -80,6 +87,7 @@ def test_location_stays_room_number():
 
 # --- Entfall -----------------------------------------------------------------
 
+
 def test_cancelled_stays_visible_by_default():
     """Google blendet STATUS:CANCELLED aus - der Termin waere dann komplett
     weg statt sichtbar gekennzeichnet."""
@@ -95,18 +103,17 @@ def test_cancelled_never_blocks_time():
 
 
 def test_cancelled_style_status_emits_cancelled():
-    cal = Calendar.from_ical(events_to_ics([ev(status="cancelled")],
-                                           cancelled_style="status"))
+    cal = Calendar.from_ical(events_to_ics([ev(status="cancelled")], cancelled_style="status"))
     assert str(cal.walk("VEVENT")[0]["STATUS"]) == "CANCELLED"
 
 
 def test_cancelled_style_hide_drops_event():
-    ics = events_to_ics([ev(status="cancelled"), ev(uid="u2")],
-                        cancelled_style="hide")
+    ics = events_to_ics([ev(status="cancelled"), ev(uid="u2")], cancelled_style="hide")
     assert len(Calendar.from_ical(ics).walk("VEVENT")) == 1
 
 
 # --- Online-Unterricht -------------------------------------------------------
+
 
 def test_online_lesson_is_marked():
     cal = Calendar.from_ical(events_to_ics([ev(online=True)]))
@@ -152,8 +159,7 @@ from datetime import datetime as _dt
 
 def test_cancelled_names_new_slot_in_title():
     """Beim Entfall interessiert vor allem, wohin die Stunde verlegt wurde."""
-    e = ev(status="cancelled",
-           moved_to=_dt(2026, 9, 15, 18, 40, tzinfo=timezone.utc))
+    e = ev(status="cancelled", moved_to=_dt(2026, 9, 15, 18, 40, tzinfo=timezone.utc))
     su = str(Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]["SUMMARY"])
     assert su.startswith("❌ Verlegt")
     assert "Di 15.09. 18:40" in su
@@ -168,8 +174,7 @@ def test_cancelled_drops_room_from_title_and_location():
 
 
 def test_moved_lesson_shows_origin():
-    e = ev(status="moved",
-           moved_from=_dt(2026, 9, 22, 17, 0, tzinfo=timezone.utc))
+    e = ev(status="moved", moved_from=_dt(2026, 9, 22, 17, 0, tzinfo=timezone.utc))
     vev = Calendar.from_ical(events_to_ics([e])).walk("VEVENT")[0]
     assert str(vev["SUMMARY"]).startswith("➡️")
     assert "Di 22.09. 17:00" in str(vev["DESCRIPTION"])
@@ -189,8 +194,11 @@ def test_status_word_comes_first_for_truncation():
 
 
 def test_categories_reflect_state():
-    for status, cat in (("cancelled", "Entfall"), ("moved", "Verlegt"),
-                        ("substitution", "Vertretung")):
+    for status, cat in (
+        ("cancelled", "Entfall"),
+        ("moved", "Verlegt"),
+        ("substitution", "Vertretung"),
+    ):
         cal = Calendar.from_ical(events_to_ics([ev(status=status)]))
         cats = cal.walk("VEVENT")[0]["CATEGORIES"].cats
         assert cat in [str(c) for c in cats], (status, cats)

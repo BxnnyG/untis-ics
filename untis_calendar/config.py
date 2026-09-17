@@ -75,16 +75,16 @@ class AppConfig(BaseModel):
     output_dir: str = "./out"
     mode: str = "cli"
     merge_consecutive: bool = True  # Doppelstunden zu einem Termin zusammenfassen
-    subject_style: str = "long"     # long | short | both - Fach in der Terminueberschrift
+    subject_style: str = "long"  # long | short | both - Fach in der Terminueberschrift
     fetch_online_info: bool = True  # Online-Unterricht/Meeting-Links per REST nachladen
-    cancelled_style: str = "mark"   # mark | status | hide - siehe README
+    cancelled_style: str = "mark"  # mark | status | hide - siehe README
     # Hintergrund-Aktualisierung im Server-Modus (0 = aus).
     # Waehrend der aktiven Stunden wird haeufig, sonst selten abgerufen -
     # ein Stundenplan aendert sich nachts nicht.
     refresh_interval_minutes: int = 15
     refresh_idle_minutes: int = 120
-    active_hours_start: int = 6   # lokale Stunde, ab der haeufig geprueft wird
-    active_hours_end: int = 22    # lokale Stunde, ab der wieder selten geprueft wird
+    active_hours_start: int = 6  # lokale Stunde, ab der haeufig geprueft wird
+    active_hours_end: int = 22  # lokale Stunde, ab der wieder selten geprueft wird
 
     @field_validator("active_hours_start", "active_hours_end")
     @classmethod
@@ -156,9 +156,7 @@ class Config(BaseModel):
         files = [a.calendar.file_name for a in self.accounts]
         dupe_files = {f for f in files if files.count(f) > 1}
         if dupe_files:
-            raise ValueError(
-                f"Mehrere Accounts schreiben in dieselbe Datei: {sorted(dupe_files)}"
-            )
+            raise ValueError(f"Mehrere Accounts schreiben in dieselbe Datei: {sorted(dupe_files)}")
 
         # Gleiche Tokens sind kein harter Fehler, aber ein Sicherheitsproblem:
         # wer einen Feed kennt, kann alle anderen mitlesen.
@@ -194,6 +192,7 @@ class Config(BaseModel):
                 if not env_file.exists():
                     continue
                 from dotenv import load_dotenv
+
                 load_dotenv(env_file, override=False)
                 logger.debug("Secrets geladen aus %s", env_file)
             except PermissionError:

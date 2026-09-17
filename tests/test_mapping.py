@@ -9,7 +9,10 @@ from untis_calendar.untis_client import UntisClient
 
 def make_account(**over):
     data = {
-        "key": "acc", "school": "musterschule", "username": "u", "password": "p",
+        "key": "acc",
+        "school": "musterschule",
+        "username": "u",
+        "password": "p",
         "calendar": CalendarConfig(file_name="a.ics"),
     }
     data.update(over)
@@ -18,7 +21,10 @@ def make_account(**over):
 
 def raw(**over):
     d = {
-        "id": 2452977, "date": 20260909, "startTime": 730, "endTime": 815,
+        "id": 2452977,
+        "date": 20260909,
+        "startTime": 730,
+        "endTime": 815,
         "kl": [{"id": 4720, "name": "10A", "longname": "Klasse 10A"}],
         "te": [{"id": 248, "name": "LR", "longname": "Mustermann"}],
         "su": [{"id": 333, "name": "D", "longname": "DEUTSCH"}],
@@ -62,7 +68,9 @@ def test_uid_is_stable_across_room_change(client):
     statt einen zweiten anzulegen."""
     a = make_account()
     u1 = client._map_raw_to_event(raw(), a).uid
-    u2 = client._map_raw_to_event(raw(ro=[{"id": 9, "name": "X999"}], startTime=900, endTime=945), a).uid
+    u2 = client._map_raw_to_event(
+        raw(ro=[{"id": 9, "name": "X999"}], startTime=900, endTime=945), a
+    ).uid
     assert u1 == u2
 
 
@@ -77,8 +85,9 @@ def test_merge_consecutive_lessons(client):
     evs = [
         client._map_raw_to_event(raw(id=1, startTime=730, endTime=815), a),
         client._map_raw_to_event(raw(id=2, startTime=815, endTime=900), a),
-        client._map_raw_to_event(raw(id=3, startTime=925, endTime=1010,
-                                     su=[{"id": 540, "name": "EVP"}]), a),
+        client._map_raw_to_event(
+            raw(id=3, startTime=925, endTime=1010, su=[{"id": 540, "name": "EVP"}]), a
+        ),
     ]
     merged = client._merge_consecutive(evs)
     assert len(merged) == 2
@@ -91,8 +100,9 @@ def test_merge_does_not_join_different_rooms(client):
     a = make_account()
     evs = [
         client._map_raw_to_event(raw(id=1, startTime=730, endTime=815), a),
-        client._map_raw_to_event(raw(id=2, startTime=815, endTime=900,
-                                     ro=[{"id": 9, "name": "OTHER"}]), a),
+        client._map_raw_to_event(
+            raw(id=2, startTime=815, endTime=900, ro=[{"id": 9, "name": "OTHER"}]), a
+        ),
     ]
     assert len(client._merge_consecutive(evs)) == 2
 
@@ -126,29 +136,56 @@ def test_filters(client):
 
 def test_duplicate_calendar_files_rejected():
     with pytest.raises(ValidationError):
-        Config.model_validate({
-            "app": {}, "accounts": [
-                {"key": "a", "school": "s", "username": "u", "password": "p",
-                 "calendar": {"file_name": "same.ics"}},
-                {"key": "b", "school": "s", "username": "u", "password": "p",
-                 "calendar": {"file_name": "same.ics"}},
-            ],
-        })
+        Config.model_validate(
+            {
+                "app": {},
+                "accounts": [
+                    {
+                        "key": "a",
+                        "school": "s",
+                        "username": "u",
+                        "password": "p",
+                        "calendar": {"file_name": "same.ics"},
+                    },
+                    {
+                        "key": "b",
+                        "school": "s",
+                        "username": "u",
+                        "password": "p",
+                        "calendar": {"file_name": "same.ics"},
+                    },
+                ],
+            }
+        )
 
 
 def test_duplicate_account_keys_rejected():
     with pytest.raises(ValidationError):
-        Config.model_validate({
-            "app": {}, "accounts": [
-                {"key": "a", "school": "s", "username": "u", "password": "p",
-                 "calendar": {"file_name": "a.ics"}},
-                {"key": "a", "school": "s", "username": "u", "password": "p",
-                 "calendar": {"file_name": "b.ics"}},
-            ],
-        })
+        Config.model_validate(
+            {
+                "app": {},
+                "accounts": [
+                    {
+                        "key": "a",
+                        "school": "s",
+                        "username": "u",
+                        "password": "p",
+                        "calendar": {"file_name": "a.ics"},
+                    },
+                    {
+                        "key": "a",
+                        "school": "s",
+                        "username": "u",
+                        "password": "p",
+                        "calendar": {"file_name": "b.ics"},
+                    },
+                ],
+            }
+        )
 
 
 # --- Klarnamen (longname) --------------------------------------------------
+
 
 def test_long_names_are_extracted(client):
     ev = client._map_raw_to_event(raw(), make_account())
@@ -166,8 +203,9 @@ def test_subject_display_styles(client):
 
 def test_display_falls_back_when_no_longname(client):
     """Untis liefert longname nicht immer - dann muss das Kuerzel greifen."""
-    ev = client._map_raw_to_event(raw(su=[{"id": 1, "name": "XY"}],
-                                      te=[{"id": 2, "name": "AB"}]), make_account())
+    ev = client._map_raw_to_event(
+        raw(su=[{"id": 1, "name": "XY"}], te=[{"id": 2, "name": "AB"}]), make_account()
+    )
     assert ev.subject_display("long") == "XY"
     assert ev.teacher_display() == ["AB"]
 
@@ -179,14 +217,17 @@ def test_teacher_display_prefers_full_name(client):
 
 def test_invalid_subject_style_rejected():
     from untis_calendar.config import AppConfig
+
     with pytest.raises(ValidationError):
         AppConfig(subject_style="bunt")
 
 
 # --- Online-Unterricht aus der REST-Anreicherung -----------------------------
 
+
 def test_extras_are_applied(client):
     from untis_calendar.untis_rest import LessonExtras
+
     ex = LessonExtras()
     ex.online = True
     ex.meeting_url = "https://meet.example.org/x"
@@ -205,6 +246,7 @@ def test_event_without_extras_is_offline(client):
 
 def test_merge_does_not_mix_online_and_presence(client):
     from untis_calendar.untis_rest import LessonExtras
+
     ex = LessonExtras()
     ex.online = True
     a = make_account()
@@ -217,8 +259,10 @@ def test_merge_does_not_mix_online_and_presence(client):
 
 # --- Verlegte Stunden --------------------------------------------------------
 
+
 def _extras_moved_from(slot):
     from untis_calendar.untis_rest import LessonExtras
+
     ex = LessonExtras()
     ex.cell_state = "SHIFT"
     ex.moved_from = slot
@@ -226,8 +270,9 @@ def _extras_moved_from(slot):
 
 
 def test_shift_sets_status_moved(client):
-    ev = client._map_raw_to_event(raw(id=7), make_account(),
-                                  {"7": _extras_moved_from((20260922, 1700))})
+    ev = client._map_raw_to_event(
+        raw(id=7), make_account(), {"7": _extras_moved_from((20260922, 1700))}
+    )
     assert ev.status == "moved"
     assert ev.moved_from.hour == 17 and ev.moved_from.day == 22
 
@@ -237,10 +282,13 @@ def test_cancelled_source_gets_linked_to_new_slot(client):
     richtung muss aus der verlegten Stunde ergaenzt werden."""
     a = make_account()
     cancelled = client._map_raw_to_event(
-        raw(id=1, date=20260922, startTime=1700, endTime=1745, code="cancelled"), a)
+        raw(id=1, date=20260922, startTime=1700, endTime=1745, code="cancelled"), a
+    )
     moved = client._map_raw_to_event(
-        raw(id=2, date=20260915, startTime=1840, endTime=1925), a,
-        {"2": _extras_moved_from((20260922, 1700))})
+        raw(id=2, date=20260915, startTime=1840, endTime=1925),
+        a,
+        {"2": _extras_moved_from((20260922, 1700))},
+    )
 
     client._link_moved_lessons([cancelled, moved])
     assert cancelled.moved_to is not None
@@ -250,16 +298,20 @@ def test_cancelled_source_gets_linked_to_new_slot(client):
 def test_linking_ignores_unrelated_cancellations(client):
     a = make_account()
     cancelled = client._map_raw_to_event(
-        raw(id=1, date=20260923, startTime=900, endTime=945, code="cancelled"), a)
+        raw(id=1, date=20260923, startTime=900, endTime=945, code="cancelled"), a
+    )
     moved = client._map_raw_to_event(
-        raw(id=2, date=20260915, startTime=1840, endTime=1925), a,
-        {"2": _extras_moved_from((20260922, 1700))})
+        raw(id=2, date=20260915, startTime=1840, endTime=1925),
+        a,
+        {"2": _extras_moved_from((20260922, 1700))},
+    )
     client._link_moved_lessons([cancelled, moved])
     assert cancelled.moved_to is None
 
 
 def test_substitution_details_are_kept(client):
     from untis_calendar.untis_rest import LessonExtras
+
     ex = LessonExtras()
     ex.substitutions = [("Lehrer", "VS", "MY"), ("Raum", "R101", "R204")]
     ev = client._map_raw_to_event(raw(id=3), make_account(), {"3": ex})
