@@ -209,8 +209,7 @@ class Config(BaseModel):
         shared = {t for t in tokens if tokens.count(t) > 1}
         if shared:
             logger.warning(
-                "Several accounts share the same feed token - please give each "
-                "account its own."
+                "Several accounts share the same feed token - please give each account its own."
             )
         return self
 

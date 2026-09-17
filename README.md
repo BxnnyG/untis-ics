@@ -22,7 +22,7 @@ one when a fetch fails.
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - A WebUntis account (student, teacher or class login)
 
 ## Install

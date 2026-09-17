@@ -15,9 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Lowest and highest supported versions. 3.9 matters because the
-        # project claims to support it and has already been broken on it once.
-        python-version: ["3.9", "3.12", "3.13"]
+        # Lowest and highest supported versions. The lowest one matters: the
+        # project has already shipped code that only ran on newer releases.
+        python-version: ["3.10", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

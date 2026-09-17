@@ -329,8 +329,7 @@ def create_app(config_path: str) -> FastAPI:
             if not out_file.exists():
                 raise HTTPException(
                     503,
-                    detail="Calendar could not be generated and no cached "
-                    "version is available.",
+                    detail="Calendar could not be generated and no cached version is available.",
                 )
             ics_bytes = out_file.read_bytes()
 

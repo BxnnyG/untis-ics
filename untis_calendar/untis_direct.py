@@ -141,9 +141,7 @@ class DirectUntisSession:
             new_server = resolve_server(self.school)
             if not new_server or self._normalize(new_server) == self.server:
                 raise
-            logger.warning(
-                "Server for '%s' moved: %s -> %s", self.school, self.server, new_server
-            )
+            logger.warning("Server for '%s' moved: %s -> %s", self.school, self.server, new_server)
             self.server = self._normalize(new_server)
             self.auto_resolve = False  # one retry only
             result = self._rpc_request(

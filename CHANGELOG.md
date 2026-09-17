@@ -30,7 +30,7 @@ service was made fit to run in public.
   being configurable.
 - `requests` was missing from the dependencies and only came in transitively.
 - `logging_config` used `str | None` without `from __future__ import
-  annotations`, so importing it failed on Python 3.9.
+  annotations`, so importing it failed on older interpreters.
 - Removed `auth.py`, which patched `requests.Session.request` globally and
   permanently disabled TLS verification process-wide.
 
@@ -58,6 +58,12 @@ service was made fit to run in public.
 - Environment overrides for every `app.*` and `server.*` setting.
 - Docker image and compose file.
 - Test suite and ruff configuration.
+
+### Changed
+
+- Minimum Python is **3.10**. Pydantic cannot evaluate `str | None`
+  annotations on 3.9 without an extra backport dependency, and 3.9 reached
+  end of life in October 2025 — carrying it was cost without benefit.
 
 ### Security
 

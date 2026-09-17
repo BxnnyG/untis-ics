@@ -75,10 +75,13 @@ def _build_description(e: LessonEvent) -> str:
     body: list[str] = []
     teachers = e.teacher_display()
     if teachers:
-        # Abbreviation in brackets when it differs from the full name
+        # Abbreviation in brackets when it differs from the full name.
+        # Both lists come from the same Untis payload and are expected to be
+        # the same length; strict=False keeps a mismatch from raising over
+        # what is only a cosmetic detail.
         if e.teachers_long and e.teachers and e.teachers_long != e.teachers:
             paired = ", ".join(
-                f"{lang} ({kurz})" for lang, kurz in zip(e.teachers_long, e.teachers)
+                f"{full} ({abbr})" for full, abbr in zip(e.teachers_long, e.teachers, strict=False)
             )
             body.append(f"Lehrer: {paired}")
         else:
