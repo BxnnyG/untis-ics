@@ -11,7 +11,7 @@ class LessonEvent:
     start: datetime
     end: datetime
     subject: str                 # Kuerzel, z. B. "EVP"
-    room: Optional[str]          # Raumnummer, z. B. "1012"
+    room: Optional[str]          # Raumnummer, z. B. "R102"
     teachers: List[str]          # Kuerzel, z. B. ["KL"]
     groups: List[str]
     status: str                  # scheduled|cancelled|substitution|moved
@@ -23,9 +23,9 @@ class LessonEvent:
 
     # Klarnamen aus Untis ("longname"). Untis liefert die praktisch immer mit,
     # nur abgefragt hat sie vorher niemand.
-    subject_long: Optional[str] = None    # "Entwicklung vernetzter Prozesse"
+    subject_long: Optional[str] = None    # "Netzwerktechnik"
     teachers_long: List[str] = field(default_factory=list)  # ["Beispiel"]
-    room_long: Optional[str] = None       # "TG-PC-RAUM"
+    room_long: Optional[str] = None       # "PC-Raum"
 
     # Online-Unterricht (nur ueber die REST-Ansicht verfuegbar)
     online: bool = False

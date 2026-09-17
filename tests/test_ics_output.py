@@ -53,10 +53,10 @@ def test_empty_calendar_still_valid():
 
 
 def test_summary_uses_long_subject_and_room():
-    e = ev(subject_long="Entwicklung vernetzter Prozesse", room="1012")
+    e = ev(subject_long="Netzwerktechnik", room="R102")
     ics = events_to_ics([e], subject_style="long")
     cal = Calendar.from_ical(ics)
-    assert str(cal.walk("VEVENT")[0]["SUMMARY"]) == "Entwicklung vernetzter Prozesse · 1012"
+    assert str(cal.walk("VEVENT")[0]["SUMMARY"]) == "Netzwerktechnik · R102"
 
 
 def test_summary_respects_short_style():
@@ -72,7 +72,7 @@ def test_description_pairs_teacher_name_and_code():
 
 
 def test_location_stays_room_number():
-    """Im Gebaeude sucht man R101, nicht 'EIT-Elektrotechnik'."""
+    """Im Gebaeude sucht man R101, nicht 'Hauptgebaeude'."""
     e = ev(room="R101", room_long="Hauptgebaeude")
     cal = Calendar.from_ical(events_to_ics([e]))
     assert str(cal.walk("VEVENT")[0]["LOCATION"]) == "R101"

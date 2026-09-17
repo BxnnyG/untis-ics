@@ -105,8 +105,8 @@ der alte Termin gilt als entfallen, am neuen steht die Stunde. Beide werden
 gegenseitig verlinkt, sodass an jedem Termin steht, wohin er zeigt:
 
 ```
-Di 22.09. 17:00   ❌ Verlegt · Anwendungsentwicklung … → Di 15.09. 18:40
-Di 15.09. 18:40   ➡️ Anwendungsentwicklung … · K004
+Di 22.09. 17:00   ❌ Verlegt · Netzwerktechnik … → Di 15.09. 18:40
+Di 15.09. 18:40   ➡️ Netzwerktechnik … · R102
                      Verlegt – ursprünglich Di 22.09. 17:00.
 ```
 
