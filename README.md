@@ -139,6 +139,17 @@ cp .env.example .env                 # add passwords and tokens
 docker compose up -d
 ```
 
+The image is published to the GitHub Container Registry for `linux/amd64`
+and `linux/arm64`:
+
+```bash
+docker pull ghcr.io/bxnnyg/untis-ics:latest
+```
+
+Tags: `latest` follows `main`, `1.0.0` and `1.0` come from release tags, and
+every build also gets a short commit SHA. Pin a version for anything you care
+about staying stable.
+
 The image runs as an unprivileged user, keeps generated feeds in a named
 volume (so a WebUntis outage right after a restart cannot leave you with an
 empty feed) and ships a healthcheck. `config.yaml` is mounted read-only;

@@ -56,7 +56,7 @@ service was made fit to run in public.
 - `check` command for diagnosing accounts, `enabled` flag per account,
   `/status` endpoint.
 - Environment overrides for every `app.*` and `server.*` setting.
-- Docker image and compose file.
+- Docker image and compose file, published to ghcr.io for amd64 and arm64.
 - Test suite and ruff configuration.
 
 ### Changed

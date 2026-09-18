@@ -52,6 +52,9 @@ jobs:
       - run: ruff format --check .
 
   docker:
+    # Only a build check here. Pushes to main are handled by publish.yml,
+    # which would otherwise build the same image twice.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

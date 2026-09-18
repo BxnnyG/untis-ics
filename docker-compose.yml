@@ -1,8 +1,9 @@
 services:
   untis-ics:
     image: ghcr.io/bxnnyg/untis-ics:latest
-    # Build locally instead of pulling:
-    #   docker compose build
+    # Published for linux/amd64 and linux/arm64 on every push to main.
+    # Pin a release instead of tracking latest:  :1.0.0
+    # To build from source rather than pull, run:  docker compose build
     build: .
     container_name: untis-ics
     restart: unless-stopped
