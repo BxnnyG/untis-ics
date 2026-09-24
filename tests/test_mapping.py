@@ -322,3 +322,32 @@ def test_substitution_details_are_kept(client):
 def test_slot_to_dt_rejects_garbage(client):
     assert client._slot_to_dt(None, "Europe/Berlin") is None
     assert client._slot_to_dt(("kaputt", 800), "Europe/Berlin") is None
+
+
+# --- Daylight saving ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "day,expected_utc_hour",
+    [
+        (20261024, 6),  # still CEST (+2)
+        (20261025, 7),  # clocks went back that night -> CET (+1)
+        (20261026, 7),
+        (20270328, 6),  # clocks go forward again -> CEST
+        (20270327, 7),
+    ],
+)
+def test_local_times_respect_daylight_saving(client, day, expected_utc_hour):
+    """Untis reports wall-clock time. The offset must follow the date, or every
+    lesson after a switch lands an hour off."""
+    from datetime import timezone
+
+    ev = client._map_raw_to_event(raw(date=day, startTime=800, endTime=845), make_account())
+    assert (ev.start.hour, ev.start.minute) == (8, 0)
+    assert ev.start.astimezone(timezone.utc).hour == expected_utc_hour
+
+
+def test_duration_is_unaffected_by_the_switch(client):
+    """A lesson on the switch day is still 45 minutes, not 105."""
+    ev = client._map_raw_to_event(raw(date=20261025, startTime=800, endTime=845), make_account())
+    assert (ev.end - ev.start).total_seconds() == 45 * 60
