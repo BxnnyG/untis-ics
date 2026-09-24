@@ -11,6 +11,12 @@ app:
   fetch_online_info: true      # online lessons, reschedules, substitutions (REST)
   use_untis_colors: true       # carry the school's subject colours into the feed
   show_period_numbers: true    # add "3. Stunde" to the description
+  link_to_webuntis: true       # link online lessons into WebUntis (see README)
+
+  # Keep lessons WebUntis no longer returns, so the calendar still answers
+  # "where was I in March". 0 = keep everything.
+  archive: true
+  archive_retention_days: 0
 
   # Background refresh: often during the day, rarely at night (0 = disabled).
   refresh_interval_minutes: 15

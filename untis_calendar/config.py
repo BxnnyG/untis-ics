@@ -104,7 +104,17 @@ class AppConfig(BaseModel):
     subject_style: str = "long"  # long | short | both - subject in the title
     fetch_online_info: bool = True  # load online lessons/meeting links via REST
     use_untis_colors: bool = True  # carry the school's subject colours over
+    # Add a link into WebUntis for online lessons. Many schools only store an
+    # internal video call id, which is not a joinable URL - the link at least
+    # gets you to the place where you can join.
+    link_to_webuntis: bool = True
     show_period_numbers: bool = True  # add "3. Stunde" to the description
+
+    # Keep lessons that WebUntis no longer returns. The fetch window is
+    # small on purpose, so without this anything older than
+    # window_days_before silently disappears from the calendar.
+    archive: bool = True
+    archive_retention_days: int = 0  # 0 = keep everything
     cancelled_style: str = "mark"  # mark | status | hide - see README
     # Background refresh in server mode (0 = off). Often during active hours,
     # rarely outside them - a timetable does not change overnight.

@@ -69,8 +69,12 @@ def _build_description(e: LessonEvent) -> str:
     if e.online:
         if e.meeting_url:
             head.append(f"Online-Unterricht: {e.meeting_url}")
+        elif e.source_url:
+            # The school stored an internal video call id rather than a
+            # joinable address, so point at WebUntis itself.
+            head.append(f"Online-Unterricht – Beitritt über WebUntis: {e.source_url}")
         else:
-            head.append("Online-Unterricht (noch kein Link hinterlegt)")
+            head.append("Online-Unterricht (kein Link hinterlegt)")
 
     body: list[str] = []
     teachers = e.teacher_display()
@@ -181,8 +185,14 @@ def events_to_ics(
             elif e.online:
                 ve.add("location", vText(e.meeting_url or "Online"))
 
-        if e.meeting_url and e.status != "cancelled":
-            ve.add("url", e.meeting_url)
+        link = e.meeting_url or e.source_url
+        if link and e.status != "cancelled":
+            ve.add("url", link)
+            if e.meeting_url:
+                # Google's own extension for conference links. Undocumented
+                # for subscribed feeds, so it is a bonus rather than the
+                # mechanism we rely on - the link is in the description too.
+                ve.add("x-google-conference", e.meeting_url)
 
         if e.status == "cancelled":
             # Google hides STATUS:CANCELLED in subscribed feeds, so setting it

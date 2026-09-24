@@ -29,6 +29,9 @@ class LessonEvent:
     # Online lessons (only available through the REST view)
     online: bool = False
     meeting_url: str | None = None
+    # Deep link into WebUntis, used when the school stores an internal video
+    # call id instead of a joinable URL.
+    source_url: str | None = None
 
     # Reschedules and substitutions (REST view as well)
     moved_from: datetime | None = None  # this lesson came from there

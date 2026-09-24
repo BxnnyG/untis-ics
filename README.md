@@ -215,13 +215,22 @@ Lessons flagged as online in WebUntis get `💻` in the title, the category
 `Online`, and — if one is stored — the meeting link in the `URL` property, in
 the description, and as `LOCATION` when no room is assigned.
 
-Two things from practice:
+Where the link actually comes from, in order:
 
-- Many schools set the online flag but store no URL (WebUntis then returns
-  the placeholder `"0"`). Such values are discarded and the event just says
-  no link is available.
-- More often the link sits in the lesson text. That text is searched too, and
-  a link found there marks the lesson as online.
+1. `videoCall.videoCallUrl`, when it is a real `http(s)` address.
+2. A URL found in the lesson text — teachers often just paste one there.
+3. Failing both, a link into WebUntis itself (`link_to_webuntis`).
+
+That third case is the common one, and it is worth understanding. Many
+schools do not store a joinable address at all: WebUntis returns an internal
+numeric id such as `1267921544`, or the placeholder `"0"`. Neither is a URL,
+and no public endpoint resolves them, so there is no way to derive a join
+link from them. The event is still marked as online and carries a link to the
+school's WebUntis, which is where the join button lives.
+
+A real meeting URL is additionally emitted as `X-GOOGLE-CONFERENCE`. That is
+a Google extension and undocumented for subscribed feeds, so treat it as a
+bonus — the link is in the description and the `URL` property regardless.
 
 ## Colours
 
@@ -233,6 +242,29 @@ nearest named colour is used and the exact value is attached as
 `X-APPLE-CALENDAR-COLOR`. **Google ignores both** for subscribed calendars —
 it paints the whole subscription in one colour. Apple Calendar and several
 other clients honour them.
+
+## History
+
+The fetch window is small on purpose — asking WebUntis for a whole year on
+every refresh is slow and wasteful. The side effect is that anything older
+than `window_days_before` drops out of the feed, taking with it the answer to
+"where was I on that Tuesday in March".
+
+So every lesson ever seen is kept in a small JSON file next to the calendar
+and merged back into the feed:
+
+```yaml
+archive: true
+archive_retention_days: 0    # 0 = keep everything
+```
+
+Entries are keyed by the event UID, which is anchored to the WebUntis period
+id, so a lesson that later moves or is cancelled updates its archived copy
+instead of appearing twice. Freshly fetched data always wins over the stored
+copy. Set `archive: false` to publish only the current window.
+
+The file is written atomically, and a damaged or unreadable one is treated as
+empty rather than stopping the sync.
 
 ## Refresh
 

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
-from . import heartbeat
+from . import archive, heartbeat
 from .config import AccountConfig, AppConfig, Config
 from .ics import events_to_ics
 from .logging_config import setup_logging
@@ -129,8 +129,14 @@ def create_app(config_path: str) -> FastAPI:
             logger.warning("Empty result for '%s' - keeping %s", account.key, out_file)
             return None
 
+        publish = events
+        if cfg.app.archive:
+            publish = archive.combine(
+                out_dir, account.calendar.file_name, events, cfg.app.archive_retention_days
+            )
+
         ics_bytes = events_to_ics(
-            events,
+            publish,
             calendar_name=account.calendar.display_name or f"Stundenplan {account.key}",
             refresh_minutes=cfg.app.refresh_interval_minutes or 60,
             subject_style=cfg.app.subject_style,
@@ -142,7 +148,7 @@ def create_app(config_path: str) -> FastAPI:
         state.last_success = datetime.now(timezone.utc)
         state.event_count = len(events)
         state.last_error = None
-        logger.info("Updated: %s (%d events)", out_file, len(events))
+        logger.info("Updated: %s (%d events, %d published)", out_file, len(events), len(publish))
         return ics_bytes
 
     def healthy() -> tuple[bool, list[str]]:

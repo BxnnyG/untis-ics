@@ -45,6 +45,9 @@ service was made fit to run in public.
   discarded.
 - **Subject colours** from WebUntis, mapped to the nearest CSS colour name
   for RFC 7986 `COLOR` plus the exact value as `X-APPLE-CALENDAR-COLOR`.
+- **History**: lessons WebUntis no longer returns are kept in a local
+  archive and merged back into the feed, so the calendar still answers where
+  you were months ago. Toggle with `archive`.
 - **Period numbers** from `getTimegridUnits` (`3. Stunde`, `1.-2. Stunde`).
 - **Heartbeat** to an external monitor as a dead man's switch, so a sync that
   stops working does not go unnoticed again.

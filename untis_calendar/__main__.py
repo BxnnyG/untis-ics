@@ -5,6 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
+from untis_calendar import archive
 from untis_calendar.config import Config
 from untis_calendar.ics import events_to_ics
 from untis_calendar.logging_config import setup_logging
@@ -54,8 +55,14 @@ def cmd_generate(args) -> int:
                 )
                 continue
 
+        publish = events
+        if cfg.app.archive:
+            publish = archive.combine(
+                out_dir, acc.calendar.file_name, events, cfg.app.archive_retention_days
+            )
+
         ics_bytes = events_to_ics(
-            events,
+            publish,
             calendar_name=acc.calendar.display_name or f"Stundenplan {acc.key}",
             refresh_minutes=cfg.app.refresh_interval_minutes or 60,
             subject_style=cfg.app.subject_style,
@@ -64,7 +71,7 @@ def cmd_generate(args) -> int:
             use_colors=cfg.app.use_untis_colors,
         )
         out_file.write_bytes(ics_bytes)
-        logger.info("written: %s (%d events, %d bytes)", out_file, len(events), len(ics_bytes))
+        logger.info("written: %s (%d events, %d bytes)", out_file, len(publish), len(ics_bytes))
 
     if failures:
         logger.error("%d account(s) failed.", failures)

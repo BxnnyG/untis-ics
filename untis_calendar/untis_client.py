@@ -74,6 +74,13 @@ class UntisClient:
                 logger.info("REST: %d lesson(s) flagged as online", online_count)
 
         events = [self._map_raw_to_event(r, account, extras, timegrid) for r in raw_list]
+
+        if self.app.link_to_webuntis:
+            # The canonical entry point, same shape the school search returns.
+            deep_link = f"https://{server}/WebUntis/?school={account.school}"
+            for ev in events:
+                if ev.online and not ev.meeting_url:
+                    ev.source_url = deep_link
         self._link_moved_lessons(events)
         events = [e for e in events if self._filter_event(e, account)]
         if not account.include_cancelled:

@@ -135,9 +135,40 @@ def test_online_without_room_puts_link_in_location():
     assert str(cal.walk("VEVENT")[0]["LOCATION"]) == link
 
 
-def test_online_without_link_says_so():
+def test_online_without_any_link_says_so():
     cal = Calendar.from_ical(events_to_ics([ev(online=True)]))
-    assert "noch kein Link" in str(cal.walk("VEVENT")[0]["DESCRIPTION"])
+    assert "kein Link" in str(cal.walk("VEVENT")[0]["DESCRIPTION"])
+
+
+def test_online_falls_back_to_webuntis_link():
+    """Schools often store an internal video call id, not a joinable URL."""
+    deep = "https://school.webuntis.com/WebUntis/?school=school"
+    cal = Calendar.from_ical(events_to_ics([ev(online=True, source_url=deep)]))
+    vev = cal.walk("VEVENT")[0]
+    assert deep in str(vev["DESCRIPTION"])
+    assert str(vev["URL"]) == deep
+
+
+def test_real_meeting_url_wins_over_deep_link():
+    real = "https://meet.example.org/abc"
+    deep = "https://school.webuntis.com/WebUntis/?school=school"
+    cal = Calendar.from_ical(events_to_ics([ev(online=True, meeting_url=real, source_url=deep)]))
+    vev = cal.walk("VEVENT")[0]
+    assert str(vev["URL"]) == real
+    assert str(vev["X-GOOGLE-CONFERENCE"]) == real
+
+
+def test_deep_link_gets_no_google_conference():
+    """X-GOOGLE-CONFERENCE promises a join button; a timetable link is not one."""
+    deep = "https://school.webuntis.com/WebUntis/?school=school"
+    cal = Calendar.from_ical(events_to_ics([ev(online=True, source_url=deep)]))
+    assert "X-GOOGLE-CONFERENCE" not in cal.walk("VEVENT")[0]
+
+
+def test_cancelled_online_lesson_gets_no_link():
+    deep = "https://school.webuntis.com/WebUntis/?school=school"
+    cal = Calendar.from_ical(events_to_ics([ev(online=True, source_url=deep, status="cancelled")]))
+    assert "URL" not in cal.walk("VEVENT")[0]
 
 
 def test_room_wins_over_online_in_summary():
