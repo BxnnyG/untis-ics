@@ -1,10 +1,20 @@
+# untis-ics: your WebUntis timetable as a subscribable calendar feed.
+#
+# This file is all you need - no clone, no config.yaml:
+#
+#   1. Fill in the four values under "environment".
+#   2. docker compose up -d
+#   3. Subscribe to  http://<host>:8080/calendar/timetable.ics?token=<UNTIS_FEED_TOKEN>
+#
+# Don't know your school's login name? It is not the display name:
+#   docker run --rm ghcr.io/bxnnyg/untis-ics find-school "School name or town"
+#
+# Test the login:   docker compose exec untis-ics untis-ics check
+# Update:           docker compose pull && docker compose up -d
+
 services:
   untis-ics:
     image: ghcr.io/bxnnyg/untis-ics:latest
-    # Published for linux/amd64 and linux/arm64 on every push to main.
-    # Pin a release instead of tracking latest:  :1.0.0
-    # To build from source rather than pull, run:  docker compose build
-    build: .
     container_name: untis-ics
     restart: unless-stopped
 
@@ -12,27 +22,46 @@ services:
       - "8080:8080"
 
     volumes:
-      # Your accounts. Copy config.example.yaml and edit it.
-      - ./config.yaml:/app/config.yaml:ro
-      # Generated .ics files. Keeps the last good state across restarts, so a
-      # WebUntis outage right after a restart does not leave an empty feed.
+      # Generated feeds. Keeps the last good state across restarts, so a
+      # WebUntis outage right after a restart cannot leave you with an empty
+      # calendar.
       - untis-data:/data
+      # Advanced setups (filters, colour overrides, other people's timetables):
+      # mount a config.yaml instead. It takes precedence over the UNTIS_*
+      # account variables below.
+      # - ./config.yaml:/app/config.yaml:ro
 
     environment:
-      # Passwords and tokens belong here (or in the env_file below), never in
-      # config.yaml. The names must match password_env / token_env.
-      UNTIS_PASS_STUDENT1: "${UNTIS_PASS_STUDENT1:-}"
-      FEED_TOKEN_STUDENT1: "${FEED_TOKEN_STUDENT1:-}"
-      # /status stays hidden unless this is set.
-      STATUS_TOKEN: "${STATUS_TOKEN:-}"
-      # Optional dead man's switch (Healthchecks.io, Uptime Kuma, ...).
-      HEARTBEAT_URL: "${HEARTBEAT_URL:-}"
-      # Any app.* / server.* setting can be overridden from here.
-      UNTIS_APP_TIMEZONE: "${UNTIS_APP_TIMEZONE:-Europe/Berlin}"
+      # WebUntis login name of the school, e.g. "gym-musterstadt".
+      UNTIS_SCHOOL: ""
+      UNTIS_USERNAME: ""
+      # A "$" in the password has to be written as "$$" in this file.
+      UNTIS_PASSWORD: ""
+      # Protects the feed URL. Any random string, min. 16 characters:
+      #   openssl rand -hex 24
+      UNTIS_FEED_TOKEN: ""
 
-    # Alternatively keep the secrets in a file (chmod 600, not in git):
-    # env_file:
-    #   - .env
+      # Optional: the name in the feed URL and the calendar name.
+      # UNTIS_FEED_NAME: "timetable"
+      # UNTIS_CALENDAR_NAME: "Stundenplan"
+
+      # More accounts: the same variables with _2, _3, ...
+      # UNTIS_SCHOOL_2 may be left out when it is the same school.
+      # UNTIS_USERNAME_2: ""
+      # UNTIS_PASSWORD_2: ""
+      # UNTIS_FEED_TOKEN_2: ""
+      # UNTIS_FEED_NAME_2: "timetable2"
+
+      # Optional: /status?token=... stays hidden unless this is set.
+      # STATUS_TOKEN: ""
+      # Optional: dead man's switch (Healthchecks.io, Uptime Kuma, ...).
+      # HEARTBEAT_URL: ""
+      # Any app.* / server.* setting, see config.example.yaml.
+      # UNTIS_APP_TIMEZONE: "Europe/Vienna"
+
+      # Rather keep the password out of this file? Put UNTIS_PASSWORD=... into
+      # a .env next to it (chmod 600) and write UNTIS_PASSWORD: "${UNTIS_PASSWORD}"
+      # above. Compose reads .env on its own.
 
     security_opt:
       - no-new-privileges:true

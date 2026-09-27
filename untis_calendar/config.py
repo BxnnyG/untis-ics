@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -16,6 +17,92 @@ SECRETS_FILE = "/etc/untis-sync.env"
 # UNTIS_APP_TIMEZONE -> app.timezone, UNTIS_SERVER_DOCS_ENABLED -> server.docs_enabled.
 # Meant for containers, where mounting a file for every little setting is a chore.
 ENV_PREFIX = "UNTIS_"
+
+# Accounts straight from the environment, for people who want nothing but a
+# docker-compose.yml. Deliberately a flat subset: everything nested (element,
+# filters, color_map) stays in config.yaml. Account 1 uses the bare names,
+# further accounts append _2, _3, ...
+_ENV_ACCOUNT_VAR = re.compile(
+    r"^UNTIS_(SCHOOL|USERNAME|PASSWORD|FEED_TOKEN|FEED_NAME|CALENDAR_NAME)(?:_(\d+))?$"
+)
+# The token is the only thing protecting the feed; this path is the one used
+# by people least likely to pick a good one.
+MIN_ENV_TOKEN_LENGTH = 16
+
+
+def _env(name: str) -> str | None:
+    """Environment value, with empty treated as unset (compose templates)."""
+    val = os.getenv(name, "").strip()
+    return val or None
+
+
+def _env_account_suffixes() -> list[str]:
+    """Suffixes of the accounts defined in the environment: "", "_2", ..."""
+    found: set[str] = set()
+    for name in os.environ:
+        m = _ENV_ACCOUNT_VAR.match(name)
+        if m and _env(name):
+            found.add(f"_{m.group(2)}" if m.group(2) else "")
+    return sorted(found, key=lambda s: int(s[1:]) if s else 1)
+
+
+def _accounts_from_env() -> list[dict]:
+    """Build account entries from UNTIS_USERNAME, UNTIS_PASSWORD, ...
+
+    Passwords and tokens are referenced through *_env like in config.yaml, so
+    they never end up in the model itself.
+    """
+    accounts: list[dict] = []
+    missing: list[str] = []
+    for sfx in _env_account_suffixes():
+        n = sfx[1:] or "1"
+        if sfx == "_1":
+            raise ValueError("Account 1 uses the bare names (UNTIS_USERNAME, ...), not _1")
+
+        # Siblings usually share a school, so it falls back to account 1's.
+        school = _env(f"UNTIS_SCHOOL{sfx}") or _env("UNTIS_SCHOOL")
+        username = _env(f"UNTIS_USERNAME{sfx}")
+        token = _env(f"UNTIS_FEED_TOKEN{sfx}")
+        for name, val in (
+            (f"UNTIS_SCHOOL{sfx}", school),
+            (f"UNTIS_USERNAME{sfx}", username),
+            (f"UNTIS_PASSWORD{sfx}", _env(f"UNTIS_PASSWORD{sfx}")),
+            (f"UNTIS_FEED_TOKEN{sfx}", token),
+        ):
+            if not val:
+                missing.append(name)
+        if token and len(token) < MIN_ENV_TOKEN_LENGTH:
+            raise ValueError(
+                f"UNTIS_FEED_TOKEN{sfx} is too short (min. {MIN_ENV_TOKEN_LENGTH} characters). "
+                "Generate one with: openssl rand -hex 24"
+            )
+
+        key = _env(f"UNTIS_FEED_NAME{sfx}") or ("timetable" if not sfx else f"timetable{n}")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+            # Ends up in the URL and in the file name
+            raise ValueError(f"UNTIS_FEED_NAME{sfx} may only contain letters, digits, - and _")
+        accounts.append(
+            {
+                "key": key,
+                "school": school or "",
+                "username": username or "",
+                "password_env": f"UNTIS_PASSWORD{sfx}",
+                "calendar": {
+                    "file_name": f"{key}.ics",
+                    "display_name": _env(f"UNTIS_CALENDAR_NAME{sfx}") or f"Stundenplan {username}",
+                    "web_feed": True,
+                    "token_env": f"UNTIS_FEED_TOKEN{sfx}",
+                },
+            }
+        )
+
+    if missing:
+        raise ValueError(
+            "Missing environment variables: "
+            + ", ".join(missing)
+            + ". The feed token is any long random string, e.g. from: openssl rand -hex 24"
+        )
+    return accounts
 
 
 def _apply_env_overrides(data: dict) -> list[str]:
@@ -229,9 +316,19 @@ class Config(BaseModel):
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
+        """Load config.yaml, or build the config from the environment.
+
+        Without the file, accounts come from UNTIS_USERNAME & co. - that is
+        what makes a bare docker-compose.yml enough. With the file, it wins.
+        """
         p = Path(path)
-        if not p.exists():
-            raise FileNotFoundError(f"Config file not found: {p}")
+        if p.is_dir():
+            # Docker creates a directory when a bind-mounted file is missing
+            # on the host; the resulting error would otherwise be cryptic.
+            raise IsADirectoryError(
+                f"{p} is a directory, not a file. If it is mounted into a container, "
+                "the file probably does not exist on the host."
+            )
 
         # Load secrets so password_env/token_env also work for manual CLI
         # runs. Under systemd the values already come from EnvironmentFile, so
@@ -250,9 +347,28 @@ class Config(BaseModel):
             except ImportError:
                 break
 
-        data = yaml.safe_load(p.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"Config is empty or not a YAML mapping: {p}")
+        if p.exists():
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(f"Config is empty or not a YAML mapping: {p}")
+            if _env_account_suffixes():
+                logger.warning("%s exists, so UNTIS_USERNAME & co. are ignored.", p)
+        elif _env_account_suffixes():
+            logger.info("No %s - taking the accounts from the environment.", p)
+            data = {
+                "app": {},
+                # Same variable names the compose file and .env.example use
+                "server": {
+                    "status_token_env": "STATUS_TOKEN",
+                    "heartbeat_url_env": "HEARTBEAT_URL",
+                },
+                "accounts": _accounts_from_env(),
+            }
+        else:
+            raise FileNotFoundError(
+                f"Config file not found: {p}. Either create it (see config.example.yaml) "
+                "or set UNTIS_SCHOOL, UNTIS_USERNAME, UNTIS_PASSWORD and UNTIS_FEED_TOKEN."
+            )
 
         for note in _apply_env_overrides(data):
             logger.info("Configuration from environment: %s", note)
