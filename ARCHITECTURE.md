@@ -5,7 +5,7 @@ How the pieces fit together and why they are shaped that way.
 ## Data flow
 
 ```
-config.yaml + environment
+config.yaml and/or environment
   └─> Config.load()                       config.py
       └─> UntisClient.fetch_events()      untis_client.py
           ├─> resolve_server()            school_lookup.py   (if no server configured)
@@ -130,9 +130,14 @@ One YAML file, with two escape hatches:
   overrides are logged, because silently altered configuration is miserable
   to debug.
 
-Accounts are intentionally *not* configurable from the environment. Expressing
-a list of nested objects in environment variables produces a worse interface
-than a mounted file.
+Without a config file, accounts can also come from the environment
+(`UNTIS_USERNAME`, `UNTIS_PASSWORD`, … with `_2`, `_3` for more), so a bare
+`docker-compose.yml` is a complete setup. That is deliberately a flat subset:
+nested settings (`element`, `filters`, `color_map`) would make a worse
+interface as variables than a mounted file, so they stay file-only. When the
+file exists it wins outright; the two sources are never merged, because a
+config assembled from two places is hard to reason about. Passwords and
+tokens are still referenced via `*_env` rather than copied into the model.
 
 ## Testing
 

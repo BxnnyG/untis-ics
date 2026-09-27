@@ -4,6 +4,31 @@ Notable changes to this project. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`docker-compose.yml` alone is a complete setup.** Without a
+  `config.yaml`, accounts come from `UNTIS_SCHOOL`, `UNTIS_USERNAME`,
+  `UNTIS_PASSWORD` and `UNTIS_FEED_TOKEN` (`_2`, `_3`, … for more accounts),
+  so running it no longer needs a clone, a config file or a `.env`. Feed
+  tokens set this way must be at least 16 characters.
+- `untis-ics find-school`, so the school login name can be looked up from the
+  image: `docker run --rm ghcr.io/bxnnyg/untis-ics find-school "…"`.
+  `find_schools.py` still works and calls it.
+- `--config` defaults to `config.yaml`.
+
+### Changed
+
+- The compose file only pulls the published image; it no longer carries
+  `build: .`, which needed the source tree next to it.
+- **Upgrading a clone that runs with `config.yaml` and `.env`:** the new
+  compose file no longer mounts `config.yaml` or passes the old variables.
+  Uncomment the `./config.yaml` volume line and add `env_file: .env` — see
+  DEPLOYMENT.md, "With a config.yaml".
+- A config path that is a directory — what Docker leaves behind when a
+  mounted file is missing on the host — now fails with an explanation.
+
 ## [1.0.0] - 2026-09-17
 
 First public release. The project existed before this, but silently produced

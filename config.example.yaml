@@ -49,7 +49,7 @@ accounts:
     enabled: true
 
     # IMPORTANT: the WebUntis "loginName" of the school, not its display name.
-    # Find it with:  python find_schools.py "My School"
+    # Find it with:  untis-ics find-school "My School"
     school: "myschool"
 
     # Optional. Leave it out and the server is resolved automatically -

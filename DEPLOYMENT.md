@@ -5,34 +5,77 @@ Both end up serving the same feeds.
 
 ## Docker
 
-```bash
-git clone https://github.com/BxnnyG/untis-ics.git
-cd untis-ics
+No clone needed — the compose file is the whole setup:
 
-cp config.example.yaml config.yaml    # accounts, no secrets
-cp .env.example .env                  # passwords and tokens
-chmod 600 .env
+```bash
+mkdir untis-ics && cd untis-ics
+curl -fsSLO https://raw.githubusercontent.com/BxnnyG/untis-ics/main/docker-compose.yml
+nano docker-compose.yml     # school, username, password, feed token
 
 docker compose up -d
 docker compose logs -f
 ```
 
-`config.yaml` is mounted read-only. Generated feeds live in a named volume,
-so the last good state survives a restart — without it, a WebUntis outage
-right after a restart would leave you with nothing to serve.
+Generated feeds live in a named volume, so the last good state survives a
+restart — without it, a WebUntis outage right after a restart would leave you
+with nothing to serve.
 
 Check it came up:
 
 ```bash
 curl -s localhost:8080/health
-curl -s "localhost:8080/status?token=$STATUS_TOKEN"
+docker compose exec untis-ics untis-ics check
 ```
 
-To build locally instead of pulling:
+Update:
 
 ```bash
-docker compose build
+docker compose pull && docker compose up -d
 ```
+
+### Keeping the password out of the compose file
+
+Compose reads a `.env` next to `docker-compose.yml` on its own:
+
+```bash
+install -m 600 /dev/null .env
+echo 'UNTIS_PASSWORD=...' >> .env
+```
+
+and in `docker-compose.yml`:
+
+```yaml
+UNTIS_PASSWORD: "${UNTIS_PASSWORD}"
+```
+
+### With a config.yaml
+
+For more than the account variables cover (filters, colour overrides,
+`element:`), use a config file. It takes precedence over the account
+variables.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BxnnyG/untis-ics/main/config.example.yaml -o config.yaml
+nano config.yaml
+```
+
+Uncomment the `./config.yaml:/app/config.yaml:ro` line in the compose file
+and pass the variables that `password_env` / `token_env` name, either under
+`environment:` or with `env_file: .env`. Make sure `config.yaml` exists
+before `docker compose up`: Docker otherwise creates an empty *directory*
+with that name, which the service reports on startup.
+
+### Building from source
+
+```bash
+git clone https://github.com/BxnnyG/untis-ics.git
+cd untis-ics
+docker build -t ghcr.io/bxnnyg/untis-ics:latest .
+docker compose up -d
+```
+
+Compose uses the local image as long as one with that tag exists; `docker
+compose pull` replaces it with the published one again.
 
 ## systemd
 
@@ -59,7 +102,7 @@ sudo -u untis nano config.yaml
 Find your school's login name and server:
 
 ```bash
-sudo -u untis .venv/bin/python find_schools.py "My School"
+sudo -u untis .venv/bin/untis-ics find-school "My School"
 ```
 
 ### Secrets

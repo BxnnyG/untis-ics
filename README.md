@@ -8,6 +8,33 @@ One feed per account. Cancelled lessons stay visible instead of silently
 vanishing, rescheduled lessons say where they moved to, and a failed fetch
 never wipes a working calendar.
 
+## Quick start
+
+All you need is Docker and one file:
+
+```bash
+mkdir untis-ics && cd untis-ics
+curl -fsSLO https://raw.githubusercontent.com/BxnnyG/untis-ics/main/docker-compose.yml
+nano docker-compose.yml     # fill in school, username, password, feed token
+docker compose up -d
+```
+
+Then subscribe to
+`http://<your-host>:8080/calendar/timetable.ics?token=<UNTIS_FEED_TOKEN>`.
+
+- **School** is the WebUntis login name, not the display name:
+  `docker run --rm ghcr.io/bxnnyg/untis-ics find-school "School name or town"`
+- **Feed token** is any random string of at least 16 characters, for example
+  from `openssl rand -hex 24`. It is the only thing protecting the feed.
+- **Test the login:** `docker compose exec untis-ics untis-ics check`
+- **Google Calendar** only subscribes to URLs it can reach from the internet,
+  so for Google the service needs a public HTTPS address — see
+  [Reverse proxy](DEPLOYMENT.md#reverse-proxy). Apple Calendar and
+  Thunderbird also work on the local network.
+
+More accounts, filters and all other options: see [Docker](#docker) and
+[Configure](#configure).
+
 ## Why this exists
 
 WebUntis moves schools between servers and occasionally renames their login
@@ -63,9 +90,9 @@ accounts:
 Two things trip people up:
 
 - **`school` is the WebUntis `loginName`**, not the name on the website.
-  Find it with `untis-ics` helper:
+  Find it with:
   ```bash
-  python find_schools.py "My School Name"
+  untis-ics find-school "My School Name"
   ```
 - **`server` is optional.** Leave it out and the correct host is resolved
   automatically — recommended, since schools get migrated.
@@ -133,11 +160,30 @@ WantedBy=multi-user.target
 
 ### Docker
 
-```bash
-cp config.example.yaml config.yaml   # edit it
-cp .env.example .env                 # add passwords and tokens
-docker compose up -d
-```
+The [Quick start](#quick-start) needs nothing but
+[`docker-compose.yml`](docker-compose.yml). Without a `config.yaml`, the
+accounts come from these variables:
+
+| Variable | |
+|----------|---|
+| `UNTIS_SCHOOL` | WebUntis login name of the school (required) |
+| `UNTIS_USERNAME` | required |
+| `UNTIS_PASSWORD` | required. A `$` is written `$$` in the compose file. |
+| `UNTIS_FEED_TOKEN` | required, min. 16 characters |
+| `UNTIS_FEED_NAME` | name in the feed URL, default `timetable` |
+| `UNTIS_CALENDAR_NAME` | calendar name in Google/Apple, default `Stundenplan <username>` |
+| `STATUS_TOKEN` | enables `/status` |
+| `HEARTBEAT_URL` | see [Monitoring](#monitoring) |
+
+Further accounts use the same names with `_2`, `_3`, … appended
+(`UNTIS_USERNAME_2`, …); their feeds default to `timetable2`, `timetable3`.
+`UNTIS_SCHOOL_2` can be left out when it is the same school. All `app.*` and
+`server.*` settings work as `UNTIS_APP_*` / `UNTIS_SERVER_*`.
+
+Anything beyond that — filters, colour overrides, someone else's timetable
+via `element:` — needs a `config.yaml`. Mount it (the line is in the compose
+file, commented out) and it takes over; the account variables are then
+ignored.
 
 The image is published to the GitHub Container Registry for `linux/amd64`
 and `linux/arm64`:
@@ -146,14 +192,13 @@ and `linux/arm64`:
 docker pull ghcr.io/bxnnyg/untis-ics:latest
 ```
 
-Tags: `latest` follows `main`, `1.0.0` and `1.0` come from release tags, and
-every build also gets a short commit SHA. Pin a version for anything you care
-about staying stable.
+Tags: `latest` follows `main`, release tags (`v1.2.3`) produce `1.2.3` and
+`1.2`, and every build also gets a short commit SHA. Pin a version for
+anything you care about staying stable.
 
 The image runs as an unprivileged user, keeps generated feeds in a named
 volume (so a WebUntis outage right after a restart cannot leave you with an
-empty feed) and ships a healthcheck. `config.yaml` is mounted read-only;
-secrets come from the environment.
+empty feed) and ships a healthcheck.
 
 ## Google Calendar
 

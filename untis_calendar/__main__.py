@@ -116,6 +116,32 @@ def cmd_check(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_find_school(args) -> int:
+    """Print the WebUntis loginName (``school``) and server for a search."""
+    from untis_calendar.school_lookup import search_schools
+
+    query = " ".join(args.query)
+    try:
+        schools = search_schools(query)
+    except Exception as e:
+        print(f"Search failed: {e}", file=sys.stderr)
+        return 1
+
+    if not schools:
+        print(f"No match for '{query}'.")
+        print("Tip: try part of the school name, or the town.")
+        return 1
+
+    print(f"\n{len(schools)} match(es) for '{query}':\n")
+    for s in schools:
+        print(f"  {s.get('displayName', '?')}")
+        print(f"    school : {s.get('loginName')}")
+        print(f"    server : {s.get('server')}")
+        print(f"    address: {s.get('address', '-')}")
+        print()
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
 
@@ -126,12 +152,17 @@ def cmd_serve(args) -> int:
     return 0
 
 
-def main() -> int:
+# A missing file is fine as long as the accounts are in the environment
+# (UNTIS_USERNAME & co.), which is how the bare docker-compose.yml works.
+CONFIG_HELP = "path to config.yaml (default: %(default)s; optional with UNTIS_* variables)"
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser("untis-ics")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_gen = sub.add_parser("generate", help="write the ICS files")
-    p_gen.add_argument("--config", required=True)
+    p_gen.add_argument("--config", default="config.yaml", help=CONFIG_HELP)
     p_gen.add_argument("--only", help="only these account keys (comma separated)")
     p_gen.add_argument(
         "--allow-empty",
@@ -141,18 +172,22 @@ def main() -> int:
     p_gen.set_defaults(func=cmd_generate)
 
     p_chk = sub.add_parser("check", help="test accounts (server, login, fetch)")
-    p_chk.add_argument("--config", required=True)
+    p_chk.add_argument("--config", default="config.yaml", help=CONFIG_HELP)
     p_chk.add_argument("--only", help="only these account keys (comma separated)")
     p_chk.add_argument("--verbose", action="store_true")
     p_chk.set_defaults(func=cmd_check)
 
     p_srv = sub.add_parser("serve", help="run the web server")
-    p_srv.add_argument("--config", required=True)
+    p_srv.add_argument("--config", default="config.yaml", help=CONFIG_HELP)
     p_srv.add_argument("--host", default="0.0.0.0")
     p_srv.add_argument("--port", type=int, default=8080)
     p_srv.set_defaults(func=cmd_serve)
 
-    args = parser.parse_args()
+    p_find = sub.add_parser("find-school", help="look up a school's login name and server")
+    p_find.add_argument("query", nargs="+", help="part of the school name, or the town")
+    p_find.set_defaults(func=cmd_find_school)
+
+    args = parser.parse_args(argv)
     return args.func(args) or 0
 
 
