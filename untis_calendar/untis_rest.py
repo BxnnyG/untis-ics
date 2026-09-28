@@ -44,6 +44,8 @@ class LessonExtras:
         "moved_to",
         "online",
         "substitutions",
+        "teachers",
+        "teachers_long",
         "texts",
     )
 
@@ -60,6 +62,10 @@ class LessonExtras:
         self.substitutions: list[tuple] = []
         # Subject colour from Untis as hex, e.g. "#80ffff"
         self.color: str | None = None
+        # Teachers as the web frontend shows them. JSON-RPC leaves them out
+        # for some logins (class logins in particular).
+        self.teachers: list[str] = []
+        self.teachers_long: list[str] = []
 
     def __repr__(self) -> str:  # pragma: no cover - nur Debug
         return (
@@ -136,9 +142,7 @@ class UntisRestSession:
         except Exception as e:
             logger.debug("REST logout ignored: %s", e)
 
-    def _week_data(
-        self, element_id: int, element_type: int, day: date
-    ) -> tuple[list[dict[str, Any]], dict[tuple, str], dict[tuple, str]]:
+    def _week_data(self, element_id: int, element_type: int, day: date) -> dict[str, Any]:
         resp = with_retry(
             lambda: self.session.get(
                 f"{self.server}/WebUntis/api/public/timetable/weekly/data",
@@ -158,23 +162,8 @@ class UntisRestSession:
         try:
             res = data["data"]["result"]["data"]
         except (KeyError, TypeError):
-            return [], {}, {}
-
-        periods = res.get("elementPeriods", {}).get(str(element_id)) or []
-        if not isinstance(periods, list):
-            periods = []
-
-        # Registry (type, id) -> name so orgId can be resolved, plus the
-        # subject colour the school assigned.
-        names: dict[tuple, str] = {}
-        colors: dict[tuple, str] = {}
-        for el in res.get("elements") or []:
-            key = (el.get("type"), el.get("id"))
-            names[key] = el.get("name") or el.get("longName") or ""
-            back = el.get("backColor")
-            if back:
-                colors[key] = back if str(back).startswith("#") else f"#{back}"
-        return periods, names, colors
+            return {}
+        return res if isinstance(res, dict) else {}
 
     def fetch_extras(
         self, element_id: int, element_type: int, start: date, end: date
@@ -183,65 +172,93 @@ class UntisRestSession:
         out: dict[str, LessonExtras] = {}
         for monday in _mondays(start, end):
             try:
-                periods, names, colors = self._week_data(element_id, element_type, monday)
+                res = self._week_data(element_id, element_type, monday)
             except Exception as e:
                 logger.warning("REST week %s not retrievable: %s", monday, e)
                 continue
-
-            for p in periods:
-                pid = str(p.get("id") or "")
-                if not pid:
-                    continue
-                ex = out.setdefault(pid, LessonExtras())
-
-                vc = p.get("videoCall") or {}
-                if isinstance(vc, dict):
-                    if vc.get("active"):
-                        ex.online = True
-                    url = _clean_url(vc.get("videoCallUrl"))
-                    if url:
-                        ex.meeting_url = url
-
-                ex.cell_state = p.get("cellState")
-
-                # The subject element (type 3) carries the school's colour.
-                for el in p.get("elements") or []:
-                    if el.get("type") == 3:
-                        ex.color = colors.get((3, el.get("id")))
-                        break
-
-                # Rescheduled lesson: rescheduleInfo points at the other end.
-                # isSource=True means this is the original and it happens
-                # somewhere else.
-                ri = p.get("rescheduleInfo") or {}
-                if ri.get("date"):
-                    slot = (int(ri["date"]), int(ri.get("startTime") or 0))
-                    if ri.get("isSource"):
-                        ex.moved_to = slot
-                    else:
-                        ex.moved_from = slot
-
-                # Substitutions: orgId holds the element that was replaced
-                for el in p.get("elements") or []:
-                    org_id = el.get("orgId")
-                    if not org_id:
-                        continue
-                    et = el.get("type")
-                    label = ELEMENT_LABELS.get(et, "Element")
-                    vorher = names.get((et, org_id), str(org_id))
-                    nachher = names.get((et, el.get("id")), str(el.get("id")))
-                    if vorher != nachher:
-                        ex.substitutions.append((label, vorher, nachher))
-
-                texts = [p.get(k) for k in ("lessonText", "periodText", "periodInfo", "substText")]
-                ex.texts = [str(t).strip() for t in texts if t and str(t).strip()]
-
-                if not ex.meeting_url:
-                    found = _find_url_in_text(*texts)
-                    if found:
-                        ex.meeting_url = found
-                        ex.online = True
+            parse_week(res, element_id, out)
         return out
+
+
+def parse_week(res: dict[str, Any], element_id: int, out: dict[str, LessonExtras]) -> None:
+    """Fold one week of the REST view into ``out`` (period id -> extras)."""
+    periods = (res.get("elementPeriods") or {}).get(str(element_id)) or []
+    if not isinstance(periods, list):
+        periods = []
+
+    # Registry (type, id) -> element, to resolve ids and orgIds into names
+    # and to find the subject colour the school assigned.
+    registry: dict[tuple, dict[str, Any]] = {
+        (el.get("type"), el.get("id")): el for el in res.get("elements") or []
+    }
+
+    def name(et: Any, eid: Any) -> str:
+        el = registry.get((et, eid)) or {}
+        return el.get("name") or el.get("longName") or ""
+
+    for p in periods:
+        pid = str(p.get("id") or "")
+        if not pid:
+            continue
+        ex = out.setdefault(pid, LessonExtras())
+        elements = p.get("elements") or []
+
+        vc = p.get("videoCall") or {}
+        if isinstance(vc, dict):
+            if vc.get("active"):
+                ex.online = True
+            url = _clean_url(vc.get("videoCallUrl"))
+            if url:
+                ex.meeting_url = url
+
+        ex.cell_state = p.get("cellState")
+
+        # The subject element (type 3) carries the school's colour.
+        for el in elements:
+            if el.get("type") == 3:
+                back = (registry.get((3, el.get("id"))) or {}).get("backColor")
+                ex.color = (back if str(back).startswith("#") else f"#{back}") if back else None
+                break
+
+        # Current teachers (type 2). An id without a named registry entry
+        # means the school hides the name - nothing to show then.
+        teachers = [registry.get((2, el.get("id"))) or {} for el in elements if el.get("type") == 2]
+        teachers = [t for t in teachers if t.get("name")]
+        ex.teachers = [t["name"] for t in teachers]
+        longs = [t.get("longName") or t["name"] for t in teachers]
+        ex.teachers_long = longs if longs != ex.teachers else []
+
+        # Rescheduled lesson: rescheduleInfo points at the other end.
+        # isSource=True means this is the original and it happens
+        # somewhere else.
+        ri = p.get("rescheduleInfo") or {}
+        if ri.get("date"):
+            slot = (int(ri["date"]), int(ri.get("startTime") or 0))
+            if ri.get("isSource"):
+                ex.moved_to = slot
+            else:
+                ex.moved_from = slot
+
+        # Substitutions: orgId holds the element that was replaced
+        for el in elements:
+            org_id = el.get("orgId")
+            if not org_id:
+                continue
+            et = el.get("type")
+            label = ELEMENT_LABELS.get(et, "Element")
+            vorher = name(et, org_id) or str(org_id)
+            nachher = name(et, el.get("id")) or str(el.get("id"))
+            if vorher != nachher:
+                ex.substitutions.append((label, vorher, nachher))
+
+        texts = [p.get(k) for k in ("lessonText", "periodText", "periodInfo", "substText")]
+        ex.texts = [str(t).strip() for t in texts if t and str(t).strip()]
+
+        if not ex.meeting_url:
+            found = _find_url_in_text(*texts)
+            if found:
+                ex.meeting_url = found
+                ex.online = True
 
 
 def _mondays(start: date, end: date) -> Iterator[date]:

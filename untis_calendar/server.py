@@ -113,8 +113,11 @@ def create_app(config_path: str) -> FastAPI:
         """
         state = states[account.key]
         out_file = out_dir / account.calendar.file_name
+        schoolyear = cfg.app.fetch_schoolyear and archive.schoolyear_due(
+            out_dir, account.calendar.file_name, cfg.app.schoolyear_refresh_hours
+        )
         try:
-            events = client.fetch_events(account)
+            result = client.fetch(account, schoolyear=schoolyear)
         except Exception as e:
             state.last_error = str(e)
             state.last_error_at = datetime.now(timezone.utc)
@@ -122,6 +125,7 @@ def create_app(config_path: str) -> FastAPI:
             logger.debug("Details:", exc_info=True)
             return None
 
+        events = result.events
         if not events and out_file.exists() and out_file.stat().st_size > 200:
             # Suspicious: there was data before and none now. Do not overwrite.
             state.last_error = "Empty result - keeping the existing file"
@@ -129,11 +133,7 @@ def create_app(config_path: str) -> FastAPI:
             logger.warning("Empty result for '%s' - keeping %s", account.key, out_file)
             return None
 
-        publish = events
-        if cfg.app.archive:
-            publish = archive.combine(
-                out_dir, account.calendar.file_name, events, cfg.app.archive_retention_days
-            )
+        publish = archive.update(out_dir, account.calendar.file_name, result, cfg.app)
 
         ics_bytes = events_to_ics(
             publish,
@@ -169,7 +169,10 @@ def create_app(config_path: str) -> FastAPI:
         while True:
             for account in cfg.active_accounts:
                 try:
-                    await asyncio.to_thread(refresh_account, account)
+                    # Same lock as the feed endpoint: both write the archive,
+                    # and a school-year fetch takes long enough to collide.
+                    async with locks[account.key]:
+                        await asyncio.to_thread(refresh_account, account)
                 except Exception:
                     logger.exception("Unexpected error refreshing '%s'", account.key)
 

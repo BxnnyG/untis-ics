@@ -39,7 +39,7 @@ def _client(tmp_path, monkeypatch, status_token="statusgeheim"):
     def boom(*a, **kw):
         raise AssertionError("Es wurde ein Untis-Login versucht")
 
-    monkeypatch.setattr("untis_calendar.server.UntisClient.fetch_events", boom)
+    monkeypatch.setattr("untis_calendar.server.UntisClient.fetch", boom)
     c = TestClient(create_app(str(cfg)))
     c.out = out
     return c

@@ -206,6 +206,11 @@ class DirectUntisSession:
         result = self._rpc_request("getTimetable", {"options": options})
         return result if isinstance(result, list) else []
 
+    def schoolyears(self) -> list[dict[str, Any]]:
+        """All school years the school has set up, with start and end date."""
+        result = self._rpc_request("getSchoolyears", {})
+        return result if isinstance(result, list) else []
+
     def timegrid(self) -> dict[int, str]:
         """Timegrid: start time (HHMM) -> period name ("1", "2", ...).
 

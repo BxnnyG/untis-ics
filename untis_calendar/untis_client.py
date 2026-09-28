@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
+import requests
+
 from .config import AccountConfig, AppConfig
-from .models import LessonEvent
+from .models import FetchResult, LessonEvent
 from .school_lookup import resolve_server
-from .untis_direct import UntisError, direct_untis_login
+from .untis_direct import DirectUntisSession, UntisError, direct_untis_login
 from .untis_rest import fetch_lesson_extras
 from .utils import stable_uid, tz_aware
 
@@ -15,6 +17,52 @@ logger = logging.getLogger(__name__)
 
 # WebUntis element types
 ELEMENT_TYPES = {"class": 1, "teacher": 2, "subject": 3, "room": 4, "student": 5}
+
+# Block size for fetching the school year. Schools can limit how far ahead
+# (or back) students may look; small blocks mean a refused one loses little.
+CHUNK_DAYS = 28
+
+
+def _ymd(value: Any) -> date:
+    """20260928 -> date(2026, 9, 28)"""
+    s = str(value)
+    if len(s) != 8 or not s.isdigit():
+        raise ValueError(f"not a YYYYMMDD date: {value!r}")
+    return date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
+
+
+def pick_schoolyear(years: list[dict[str, Any]], today: date) -> tuple[date, date] | None:
+    """The school year containing today, or else the next one (summer break)."""
+    parsed = []
+    for y in years or []:
+        try:
+            parsed.append((_ymd(y["startDate"]), _ymd(y["endDate"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    for first, last in parsed:
+        if first <= today <= last:
+            return first, last
+    upcoming = sorted(p for p in parsed if p[0] > today)
+    return upcoming[0] if upcoming else None
+
+
+def chunks(first: date, last: date, backwards: bool = False) -> list[tuple[date, date]]:
+    """Split first..last into CHUNK_DAYS blocks, optionally starting at the end."""
+    out = []
+    step = timedelta(days=CHUNK_DAYS - 1)
+    if backwards:
+        cur = last
+        while cur >= first:
+            lo = max(cur - step, first)
+            out.append((lo, cur))
+            cur = lo - timedelta(days=1)
+    else:
+        cur = first
+        while cur <= last:
+            hi = min(cur + step, last)
+            out.append((cur, hi))
+            cur = hi + timedelta(days=1)
+    return out
 
 
 class UntisClient:
@@ -24,7 +72,17 @@ class UntisClient:
     def fetch_events(
         self, account: AccountConfig, now: datetime | None = None
     ) -> list[LessonEvent]:
+        """Lessons in the configured window."""
+        return self.fetch(account, now).events
+
+    def fetch(
+        self, account: AccountConfig, now: datetime | None = None, schoolyear: bool = False
+    ) -> FetchResult:
         """Fetch the timetable for one account.
+
+        The window around today is always fetched and must succeed. With
+        ``schoolyear`` the rest of the current school year is fetched on top,
+        as far as the school allows - that part is best effort.
 
         Raises on failure. Deliberately does NOT return an empty result on
         error - otherwise a brief outage would overwrite the last known good
@@ -49,7 +107,13 @@ class UntisClient:
             verify_ssl=account.verify_ssl,
         ) as sess:
             logger.info("Fetching timetable for %s from %s to %s", account.key, start, end)
-            raw_list = sess.timetable(start=start, end=end, element=self._element_kwargs(account))
+            element = self._element_kwargs(account)
+            raw_list = sess.timetable(start=start, end=end, element=element)
+            covered = [(start, end)]
+            if schoolyear:
+                more, more_covered = self._fetch_schoolyear(sess, element, now.date(), start, end)
+                raw_list += more
+                covered += more_covered
             logger.info("Received %d raw entries for %s", len(raw_list), account.key)
             person_id, person_type = sess.person_id, sess.person_type
             timegrid = sess.timegrid() if self.app.show_period_numbers else {}
@@ -58,6 +122,14 @@ class UntisClient:
         # If that fails, the sync continues without those extras.
         extras = {}
         if self.app.fetch_online_info and person_id and person_type:
+            # The REST view goes week by week, so skip the weeks past the last
+            # lesson - a school year has plenty of those.
+            lesson_days = []
+            for r in raw_list:
+                try:
+                    lesson_days.append(_ymd(r.get("date")))
+                except ValueError:
+                    continue
             extras = fetch_lesson_extras(
                 server=server,
                 school=account.school,
@@ -65,8 +137,8 @@ class UntisClient:
                 password=account.get_password(),
                 element_id=person_id,
                 element_type=person_type,
-                start=start,
-                end=end,
+                start=min(first for first, _ in covered),
+                end=max([end, *lesson_days]),
                 verify_ssl=account.verify_ssl,
             )
             online_count = sum(1 for e in extras.values() if e.online)
@@ -89,7 +161,51 @@ class UntisClient:
         if self.app.merge_consecutive:
             events = self._merge_consecutive(events)
         logger.info("Result: %d events for %s", len(events), account.key)
-        return events
+        return FetchResult(events=events, covered=covered, schoolyear=schoolyear)
+
+    def _fetch_schoolyear(
+        self,
+        sess: DirectUntisSession,
+        element: dict[str, Any] | None,
+        today: date,
+        start: date,
+        end: date,
+    ) -> tuple[list[dict[str, Any]], list[tuple[date, date]]]:
+        """The school year around the window, block by block.
+
+        Walks outwards from the window and stops at the first refused block:
+        a school that limits how far students may look refuses everything
+        beyond that point too. Only blocks that came back count as covered.
+        """
+        try:
+            year = pick_schoolyear(sess.schoolyears(), today)
+        except (UntisError, requests.RequestException) as e:
+            logger.warning("School year unknown, fetching the window only: %s", e)
+            return [], []
+        if not year:
+            logger.info("No current school year in WebUntis, fetching the window only")
+            return [], []
+
+        # Without the archive the past is dropped anyway; no point fetching it.
+        first = year[0] if self.app.archive else start
+        day = timedelta(days=1)
+        raw: list[dict[str, Any]] = []
+        covered: list[tuple[date, date]] = []
+        for blocks in (chunks(first, start - day, backwards=True), chunks(end + day, year[1])):
+            for lo, hi in blocks:
+                try:
+                    raw += sess.timetable(start=lo, end=hi, element=element)
+                except (UntisError, requests.RequestException) as e:
+                    logger.info("Timetable from %s not available, stopping there: %s", lo, e)
+                    break
+                covered.append((lo, hi))
+        if covered:
+            logger.info(
+                "School year: %s to %s fetched",
+                min(lo for lo, _ in covered),
+                max(hi for _, hi in covered),
+            )
+        return raw, covered
 
     def _element_kwargs(self, account: AccountConfig) -> dict[str, Any] | None:
         """Element for getTimetable. None -> the logged-in user is used."""
@@ -168,6 +284,11 @@ class UntisClient:
             moved_to = self._slot_to_dt(extra.moved_to, tz)
             if account.color_map.get(subject) is None:
                 color = extra.color
+            # Some logins (class logins in particular) get no teacher through
+            # JSON-RPC, although the web frontend shows one.
+            if not teachers and extra.teachers:
+                teachers = list(extra.teachers)
+                teachers_long = list(extra.teachers_long)
 
             if extra.cell_state == "SHIFT" or moved_from:
                 status = "moved"

@@ -288,12 +288,30 @@ nearest named colour is used and the exact value is attached as
 it paints the whole subscription in one colour. Apple Calendar and several
 other clients honour them.
 
+## School year
+
+The feed covers the **whole current school year**, as far as the school lets
+you look ahead — many schools only publish a few weeks, some the full year.
+
+Asking WebUntis for a year on every refresh would multiply the load for no
+gain: lessons months ahead rarely change. So there are two cadences:
+
+```yaml
+window_days_before: 3          # refreshed on every cycle
+window_days_after: 28
+fetch_schoolyear: true         # the rest of the school year ...
+schoolyear_refresh_hours: 12   # ... only this often
+```
+
+The school year is fetched in four-week blocks, outwards from today. A block
+the school refuses ends the walk in that direction, so a school that only
+publishes three weeks ahead costs one refused request, not ten. In the summer
+break, the next school year is used as soon as WebUntis knows it.
+
 ## History
 
-The fetch window is small on purpose — asking WebUntis for a whole year on
-every refresh is slow and wasteful. The side effect is that anything older
-than `window_days_before` drops out of the feed, taking with it the answer to
-"where was I on that Tuesday in March".
+Anything older than the fetch window still has to stay in the feed, or it
+takes the answer to "where was I on that Tuesday in March" with it.
 
 So every lesson ever seen is kept in a small JSON file next to the calendar
 and merged back into the feed:
@@ -306,7 +324,12 @@ archive_retention_days: 0    # 0 = keep everything
 Entries are keyed by the event UID, which is anchored to the WebUntis period
 id, so a lesson that later moves or is cancelled updates its archived copy
 instead of appearing twice. Freshly fetched data always wins over the stored
-copy. Set `archive: false` to publish only the current window.
+copy, and for the days a fetch covered it is the whole truth: a stored lesson
+WebUntis no longer returns — typically after the school publishes a new
+timetable version — is removed instead of lingering as a ghost.
+
+The same file holds the rest of the school year between its fetches. Set
+`archive: false` to drop everything before the current window.
 
 The file is written atomically, and a damaged or unreadable one is treated as
 empty rather than stopping the sync.
@@ -421,7 +444,7 @@ translatable would be a welcome contribution; it is currently hardcoded in
 | `bad credentials` | Password or user expired. Try the WebUntis web login first. |
 | Calendar empty in Google | Check `/status`. If the feed has data, Google simply has not fetched again yet. |
 | Feed returns `404` | Wrong token or unknown account key — both answer identically on purpose. |
-| No teacher names | Class logins (`personType 1`) do not receive a teacher field from WebUntis. Nothing to fix on this side. |
+| No teacher names | Class logins (`personType 1`) get no teacher through JSON-RPC; it is taken from the REST view instead, which needs `fetch_online_info: true`. If the WebUntis website shows no teacher either, the school hides them. `untis-ics check` prints what arrives. |
 
 A failed fetch never overwrites an existing `.ics` file with an empty
 calendar, so a brief WebUntis outage does not empty your calendar.

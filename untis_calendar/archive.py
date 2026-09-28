@@ -10,6 +10,11 @@ generated calendar and merged back in on the next run. Entries are keyed by
 the event UID, which is anchored to the WebUntis period id: a lesson that
 later moves or gets cancelled updates its archived copy instead of producing
 a duplicate.
+
+The same store holds the rest of the school year between its (rarer)
+fetches. For the days a fetch covered, WebUntis is authoritative: a stored
+lesson it no longer returns was removed - for example when the school
+publishes a new timetable version with new period ids - and is dropped.
 """
 
 from __future__ import annotations
@@ -17,10 +22,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .models import LessonEvent
+from .config import AppConfig
+from .models import FetchResult, LessonEvent
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +66,8 @@ def _event_from_dict(d: dict) -> LessonEvent | None:
         return None
 
 
-def load(path: Path) -> dict[str, dict]:
-    """Read the store. A missing or damaged file yields an empty archive."""
+def _read(path: Path) -> dict:
+    """The whole stored payload. Missing, damaged or foreign -> empty."""
     if not path.exists():
         return {}
     try:
@@ -70,24 +76,82 @@ def load(path: Path) -> dict[str, dict]:
         logger.warning("Archive %s unreadable (%s) - starting empty", path, exc)
         return {}
 
-    if raw.get("version") != SCHEMA_VERSION:
+    if not isinstance(raw, dict) or raw.get("version") != SCHEMA_VERSION:
         logger.warning(
             "Archive %s has version %s, expected %s - starting empty",
             path,
-            raw.get("version"),
+            raw.get("version") if isinstance(raw, dict) else None,
             SCHEMA_VERSION,
         )
         return {}
-    events = raw.get("events")
+    return raw
+
+
+def load(path: Path) -> dict[str, dict]:
+    """Read the store. A missing or damaged file yields an empty archive."""
+    events = _read(path).get("events")
     return events if isinstance(events, dict) else {}
 
 
-def save(path: Path, store: dict[str, dict]) -> None:
+def save(path: Path, store: dict[str, dict], schoolyear_fetched_at: str | None = None) -> None:
     """Write the store atomically so an interrupted run cannot truncate it."""
     tmp = path.with_suffix(path.suffix + ".tmp")
-    payload = {"version": SCHEMA_VERSION, "events": store}
+    payload: dict = {"version": SCHEMA_VERSION, "events": store}
+    if schoolyear_fetched_at:
+        payload["schoolyear_fetched_at"] = schoolyear_fetched_at
     tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+def schoolyear_due(out_dir: Path, file_name: str, hours: int, now: datetime | None = None) -> bool:
+    """Is it time to fetch the whole school year again?"""
+    stamp = _read(store_path(out_dir, file_name)).get("schoolyear_fetched_at")
+    try:
+        last = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return True
+    return (now or datetime.now(timezone.utc)) - last >= timedelta(hours=hours)
+
+
+def _start_day(raw: dict) -> date | None:
+    try:
+        return datetime.fromisoformat(raw["start"]).date()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def forget_removed(
+    store: dict[str, dict],
+    fresh: Iterable[LessonEvent],
+    covered: Iterable[tuple[date, date]],
+) -> int:
+    """Drop stored lessons inside the covered days that WebUntis no longer has."""
+    ranges = list(covered)
+    if not ranges:
+        return 0
+    keep = {e.uid for e in fresh}
+    gone = []
+    for uid, raw in store.items():
+        day = _start_day(raw)
+        if uid not in keep and day and any(lo <= day <= hi for lo, hi in ranges):
+            gone.append(uid)
+    for uid in gone:
+        del store[uid]
+    return len(gone)
+
+
+def trim(store: dict[str, dict], keep_from: date | None, keep_until: date | None) -> int:
+    """Drop lessons outside keep_from..keep_until (either end may be open)."""
+    gone = []
+    for uid, raw in store.items():
+        day = _start_day(raw)
+        if day is None:
+            continue
+        if (keep_from and day < keep_from) or (keep_until and day > keep_until):
+            gone.append(uid)
+    for uid in gone:
+        del store[uid]
+    return len(gone)
 
 
 def merge(store: dict[str, dict], events: Iterable[LessonEvent]) -> int:
@@ -130,26 +194,63 @@ def combine(
     file_name: str,
     fresh: list[LessonEvent],
     retention_days: int = 0,
+    covered: Iterable[tuple[date, date]] = (),
+    keep_from: date | None = None,
+    keep_until: date | None = None,
+    schoolyear_fetched: bool = False,
 ) -> list[LessonEvent]:
     """Merge fresh lessons with the archive and return everything to publish.
 
     The freshly fetched lessons always win for their own UIDs, so a lesson
     that changed since it was archived is corrected rather than duplicated.
+    Within ``covered`` they are the whole truth, see forget_removed().
     """
     path = store_path(out_dir, file_name)
-    store = load(path)
-    before = len(store)
-    merge(store, fresh)
-    removed = prune(store, retention_days)
-    save(path, store)
+    raw = _read(path)
+    store = raw.get("events") if isinstance(raw.get("events"), dict) else {}
+    stamp = raw.get("schoolyear_fetched_at")
+    if schoolyear_fetched:
+        stamp = datetime.now(timezone.utc).isoformat()
+
+    removed = forget_removed(store, fresh, covered)
+    added = merge(store, fresh)
+    pruned = prune(store, retention_days) + trim(store, keep_from, keep_until)
+    save(path, store, stamp)
 
     logger.info(
-        "Archive %s: %d entries (+%d new, -%d pruned)",
+        "Archive %s: %d entries (+%d new, -%d removed in WebUntis, -%d pruned)",
         path.name,
         len(store),
-        len(store) - before + removed,
+        added,
         removed,
+        pruned,
     )
     events = to_events(store)
     events.sort(key=lambda e: (e.start, e.subject))
     return events
+
+
+def update(
+    out_dir: Path,
+    file_name: str,
+    result: FetchResult,
+    app: AppConfig,
+    today: date | None = None,
+) -> list[LessonEvent]:
+    """Store a fetch result and return everything to publish, per the config.
+
+    Without ``archive`` the past beyond the window is dropped; without
+    ``fetch_schoolyear`` everything beyond the window is, so switching it off
+    cannot leave months of stale lessons behind.
+    """
+    today = today or date.today()
+    return combine(
+        out_dir,
+        file_name,
+        result.events,
+        retention_days=app.archive_retention_days if app.archive else 0,
+        covered=result.covered,
+        keep_from=None if app.archive else today - timedelta(days=app.window_days_before),
+        keep_until=None if app.fetch_schoolyear else today + timedelta(days=app.window_days_after),
+        schoolyear_fetched=result.schoolyear,
+    )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 
 @dataclass
@@ -64,3 +64,17 @@ class LessonEvent:
         if self.teachers_long:
             return self.teachers_long
         return self.teachers
+
+
+@dataclass
+class FetchResult:
+    """What one fetch returned, and for which days it is authoritative.
+
+    A lesson that is stored for a day inside ``covered`` but missing from
+    ``events`` was removed in WebUntis. Outside ``covered`` nothing is known.
+    """
+
+    events: list[LessonEvent]
+    covered: list[tuple[date, date]]
+    # The whole school year was fetched, not just the window
+    schoolyear: bool = False

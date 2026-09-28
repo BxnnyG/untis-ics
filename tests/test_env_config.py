@@ -158,7 +158,7 @@ def test_server_protects_the_feed(tmp_path, monkeypatch):
     def boom(*a, **kw):
         raise AssertionError("no login expected")
 
-    monkeypatch.setattr("untis_calendar.server.UntisClient.fetch_events", boom)
+    monkeypatch.setattr("untis_calendar.server.UntisClient.fetch", boom)
 
     with TestClient(create_app("config.yaml")) as c:
         assert c.get("/calendar/timetable.ics").status_code == 404

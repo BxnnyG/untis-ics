@@ -34,8 +34,11 @@ def cmd_generate(args) -> int:
     failures = 0
     for acc in _select_accounts(cfg, args.only):
         out_file = out_dir / acc.calendar.file_name
+        schoolyear = cfg.app.fetch_schoolyear and archive.schoolyear_due(
+            out_dir, acc.calendar.file_name, cfg.app.schoolyear_refresh_hours
+        )
         try:
-            events = client.fetch_events(acc)
+            result = client.fetch(acc, schoolyear=schoolyear)
         except Exception as e:
             failures += 1
             # Deliberately do NOT write: a failed attempt must never turn an
@@ -46,6 +49,7 @@ def cmd_generate(args) -> int:
                 logger.warning("Keeping existing file %s unchanged.", out_file)
             continue
 
+        events = result.events
         if not events:
             logger.warning("No lessons for '%s' in the configured window.", acc.key)
             if out_file.exists() and out_file.stat().st_size > 200 and not args.allow_empty:
@@ -55,11 +59,7 @@ def cmd_generate(args) -> int:
                 )
                 continue
 
-        publish = events
-        if cfg.app.archive:
-            publish = archive.combine(
-                out_dir, acc.calendar.file_name, events, cfg.app.archive_retention_days
-            )
+        publish = archive.update(out_dir, acc.calendar.file_name, result, cfg.app)
 
         ics_bytes = events_to_ics(
             publish,

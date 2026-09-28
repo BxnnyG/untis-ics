@@ -202,6 +202,12 @@ class AppConfig(BaseModel):
     # window_days_before silently disappears from the calendar.
     archive: bool = True
     archive_retention_days: int = 0  # 0 = keep everything
+    # On top of the window, fetch the whole current school year, as far as
+    # the school lets you look. Lessons months ahead rarely change and the
+    # window is refreshed every cycle anyway, so this runs only every few
+    # hours - a year on every cycle would multiply the load on WebUntis.
+    fetch_schoolyear: bool = True
+    schoolyear_refresh_hours: int = 12
     cancelled_style: str = "mark"  # mark | status | hide - see README
     # Background refresh in server mode (0 = off). Often during active hours,
     # rarely outside them - a timetable does not change overnight.
@@ -215,6 +221,13 @@ class AppConfig(BaseModel):
     def valid_hour(cls, v: int) -> int:
         if not 0 <= v <= 23:
             raise ValueError("Hour must be between 0 and 23")
+        return v
+
+    @field_validator("schoolyear_refresh_hours")
+    @classmethod
+    def valid_schoolyear_refresh(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("schoolyear_refresh_hours must be at least 1")
         return v
 
     @field_validator("cancelled_style")

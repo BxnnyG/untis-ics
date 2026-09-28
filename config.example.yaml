@@ -18,6 +18,11 @@ app:
   archive: true
   archive_retention_days: 0
 
+  # On top of the window above, fetch the whole current school year - as far
+  # as the school lets you look. Runs every few hours, not on every refresh.
+  fetch_schoolyear: true
+  schoolyear_refresh_hours: 12
+
   # Background refresh: often during the day, rarely at night (0 = disabled).
   refresh_interval_minutes: 15
   refresh_idle_minutes: 120

@@ -17,8 +17,28 @@ Notable changes to this project. Format loosely follows
   image: `docker run --rm ghcr.io/bxnnyg/untis-ics find-school "…"`.
   `find_schools.py` still works and calls it.
 - `--config` defaults to `config.yaml`.
+- **The whole school year is in the feed**, as far as the school publishes
+  it, instead of four weeks ahead. The window around today is still
+  refreshed every cycle; the rest of the year every
+  `schoolyear_refresh_hours` (12 by default). That is roughly 15 % more
+  requests per day than before, not the tenfold a year on every cycle would
+  cost. Off with `fetch_schoolyear: false`.
+- Teachers for class logins. JSON-RPC withholds them; they are now taken from
+  the REST view, which the website uses as well.
+
+### Fixed
+
+- Lessons removed in WebUntis stayed in the archive and in the feed forever,
+  for example when a new timetable version brought new period ids. For the
+  days a fetch covers, stored lessons it no longer returns are now dropped.
+- The background refresh and a feed request could fetch and write the same
+  account at the same time; both now share the account's lock.
 
 ### Changed
+
+- The archive file is written even with `archive: false`, because it also
+  holds the rest of the school year between fetches. That setting now means
+  "drop lessons before the window".
 
 - The compose file only pulls the published image; it no longer carries
   `build: .`, which needed the source tree next to it.

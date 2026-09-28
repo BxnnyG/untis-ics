@@ -12,7 +12,7 @@ config.yaml and/or environment
           ├─> direct_untis_login()        untis_direct.py    JSON-RPC: authenticate
           │     ├─> getTimetable                             the actual lessons
           │     └─> getTimegridUnits                         period numbers
-          ├─> fetch_lesson_extras()       untis_rest.py      REST: online, reschedules, colours
+          ├─> fetch_lesson_extras()       untis_rest.py      REST: online, reschedules, colours, teachers
           ├─> _map_raw_to_event()                            raw JSON -> LessonEvent
           ├─> _link_moved_lessons()                          connect both ends of a reschedule
           ├─> _filter_event()                                include/exclude subjects
@@ -32,8 +32,9 @@ lessons, including cancelled ones, and is stable across the instances tested.
 
 **REST (`untis_rest.py`) only enriches.** It knows things JSON-RPC does not:
 whether a lesson is online, whether it was moved and from where, what was
-substituted, and the colour a school assigned to a subject. Its results are
-matched onto the JSON-RPC lessons by period id.
+substituted, the colour a school assigned to a subject, and the teacher where
+JSON-RPC withholds it (class logins). Its results are matched onto the
+JSON-RPC lessons by period id.
 
 The split matters because the REST view **omits cancelled lessons entirely**.
 Relying on it alone would silently drop exactly the events users care most
@@ -118,6 +119,22 @@ concurrent requests.
 The interval depends on the time of day: a timetable does not change at 3am,
 so polling at the daytime rate all night is pure load on the school's server.
 
+### The school year on a slower cadence
+
+Each cycle fetches only the window around today. Every
+`schoolyear_refresh_hours` the rest of the school year is fetched on top, in
+four-week blocks walking outwards from the window. A refused block ends the
+walk in that direction, since schools that limit how far students may look
+refuse everything past that point. The window must succeed; the extra blocks
+are best effort and only count as covered when they came back.
+
+The archive is what holds the far lessons between those fetches, which is
+why it is written even with `archive: false` (that setting then only drops
+the past). For every covered day the fetch is authoritative: a stored lesson
+it no longer contains was removed in WebUntis and is deleted. Without that
+rule a new timetable version, which comes with new period ids, would leave
+the old lessons standing next to the new ones for the rest of the year.
+
 ## Configuration
 
 One YAML file, with two escape hatches:
@@ -156,8 +173,9 @@ tests pin behaviour that is easy to regress and expensive to get wrong:
 - **Exams and homework** (`getExams`, `getHomeWork`) return
   `Method not found` on the instances tested — they are disabled server-side
   and cannot be fetched.
-- **Class logins** (`personType 1`) receive no teacher field from WebUntis.
-  The abbreviations appear only inside the student group string.
+- **Class logins** (`personType 1`) receive no teacher field through
+  JSON-RPC. The REST view has them, so they are taken from there; a school
+  that hides teachers on its website hides them there too.
 - **Google ignores per-event colours** and its own refresh cadence is not
   controllable from the feed.
 - **No rate limiting.** That belongs in a reverse proxy.
